@@ -1,4 +1,4 @@
-# 01 · 环境搭建与脚手架（HAL 库版）
+#  HAL教程 · STM32F103C8T6 精英板
 
 > 本章目标：搞清这个 HAL 工程从哪来、改了什么、怎么编译烧录；理解 HAL 工程的标准分层。
 > 步骤照做可复现；知识点解释为什么。
@@ -260,3 +260,24 @@ MCU Reset
 |---|---|---|---|
 | 1 | 编译产物里没有 .hex | 官方模板没勾 Create HEX File | 直接烧 .axf，或 Options→Output 勾 Create HEX File |
 | 2 | 工程文件名 | 官方模板叫 Project.uvprojx，别找 f103-hal-lab.uvprojx | 认准 MDK-ARM/Project.uvprojx |
+
+---
+
+## 知识卡 A · HAL_Delay(5000) 是怎么"数"出 5 秒的（中断派）
+
+你写的 `HAL_Delay(5000)` 背后发生了什么：
+
+1. `HAL_Init()`（main 开头就调了）内部调 `HAL_InitTick()`，把 SysTick 配成 **每 1ms 触发一次 SysTick_Handler 中断**（同是那个内核倒计时秒表，配法不同：到点不置标志而是跳中断）；
+2. 每次中断里执行 `uwTick++`——一个全局变量，每毫秒加 1，本质是"开机以来的毫秒数"；
+3. `HAL_Delay(5000)` 的内部：记下当前的 uwTick，然后死等 `uwTick - start >= 5000` 才返回。
+
+**和标准库/寄存器版（轮询派）的对比**：
+
+| | 轮询派（标准库/寄存器） | 中断派（HAL） |
+|---|---|---|
+| 原理 | 死盯 SysTick 到点标志 | 到点进中断，uwTick++ |
+| 代码 | 自己写 delay_ms | 库自带 HAL_Delay |
+| 精度 | 好 | 好（1ms 心跳） |
+| 限制 | 死等占着 CPU | **在中断里调用会卡死**（中断自己占着自己，uwTick 不走） |
+
+**HAL_Delay 为什么能精确**：`SystemClock_Config()` 配完时钟后 HAL 会把 SysTick 重载值更新为"实际主频/1000"——64MHz 主频下 = 64000，一样是 1ms 心跳。改频率不影响延时的准确性（库自己会换算）。

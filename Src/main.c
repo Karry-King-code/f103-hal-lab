@@ -79,7 +79,7 @@ int main(void)
   while (1)
   {
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);  /* 低电平 -> 亮 */
-    HAL_Delay(1000);                                        /* HAL 自带毫秒延时（HAL_Init 已配好 1ms SysTick） */
+    HAL_Delay(5000);                                        /* 5 秒（HAL 自带毫秒延时） */
     HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);    /* 高电平 -> 灭 */
     HAL_Delay(1000);
   }
