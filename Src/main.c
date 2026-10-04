@@ -43,13 +43,14 @@ void SystemClock_Config(void);
   */
 int main(void)
 {
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* STM32F103xB HAL library initialization:
        - Configure the Flash prefetch
-       - Systick timer is configured by default as source of time base, but user 
-         can eventually implement his proper time base source (a general purpose 
-         timer for example or other time source), keeping in mind that Time base 
-         duration should be kept 1ms since PPP_TIMEOUT_VALUEs are defined and 
+       - Systick timer is configured by default as source of time base, but user
+         can eventually implement his proper time base source (a general purpose
+         timer for example or other time source), keeping in mind that Time base
+         duration should be kept 1ms since PPP_TIMEOUT_VALUEs are defined and
          handled in milliseconds basis.
        - Set NVIC Group Priority to 4
        - Low Level Initialization
@@ -63,10 +64,24 @@ int main(void)
   /* Add your application code here
      */
 
+  /* 02 章：点亮 PC13 绿灯（实测：PC13=绿灯，低电平亮） */
+  __HAL_RCC_GPIOC_CLK_ENABLE();                          /* 开 GPIOC 时钟（等价标准库的 RCC_APB2PeriphClockCmd） */
+
+  GPIO_InitStruct.Pin   = GPIO_PIN_13;                   /* PC13 */
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;           /* 推挽输出（等价 GPIO_Mode_Out_PP） */
+  GPIO_InitStruct.Pull  = GPIO_NOPULL;                   /* 输出不带上下拉 */
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;           /* 低速够用（等价 GPIO_Speed_2MHz） */
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);                /* 应用配置（内部写 GPIOC 的 CRH） */
+
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 上电先灭（高电平=灭） */
 
   /* Infinite loop */
   while (1)
   {
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_RESET);  /* 低电平 -> 亮 */
+    HAL_Delay(1000);                                        /* HAL 自带毫秒延时（HAL_Init 已配好 1ms SysTick） */
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);    /* 高电平 -> 灭 */
+    HAL_Delay(1000);
   }
 }
 
