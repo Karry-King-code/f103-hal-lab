@@ -279,11 +279,12 @@ MCU Reset
 |---|---|---|---|
 | 1 | 编译产物里没有 .hex | 官方模板没勾 Create HEX File | 直接烧 .axf，或 Options→Output 勾 Create HEX File |
 | 2 | 工程文件名 | 官方模板叫 Project.uvprojx，别找 f103-hal-lab.uvprojx | 认准 MDK-ARM/Project.uvprojx |
+| 3 | CubeProgrammer 报 `invalid ELF file`，报错路径被截成 `Desktop//HAL/...` | 命令行参数里的**中文路径**（姚凯锐任务/HAL库）传参时被编码吃掉 | `cd` 进 .axf 所在目录，用**相对路径** `-w f103-hal-lab/f103-hal-lab.axf`【实测 2026-10-05】 |
 
 ---
 ---
 
-# 03 · 按键控制 LED（HAL 版：按一下开始闪，再按一下停）🔶 代码已上板待确认
+# 03 · 按键控制 LED（HAL 版：按一下开始闪，再按一下停）✅ 已验收 2026-10-05
 
 > 与标准库版（f103-spl-lab 03 章）逻辑一字不差，全部函数换成 HAL 写法。新知识点：**HAL 把"上拉"从隐藏动作变成了显式字段**，以及 **HAL 自带翻转函数**。
 
@@ -370,11 +371,11 @@ STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
 
 ## 步骤 15 · 验收
 
-| 操作 | 预期 |
-|---|---|
-| 按一下 KEY1 | 绿灯 1 秒周期闪烁 |
-| 再按一下 | 灯灭、停止 |
-| 再按 | 恢复闪烁 |
+| 操作 | 预期 | 实测 |
+|---|---|---|
+| 按一下 KEY1 | 绿灯 1 秒周期闪烁 | ✅ 用户确认（2026-10-05） |
+| 再按一下 | 灯灭、停止 | ✅ 用户确认（2026-10-05） |
+| 再按 | 恢复闪烁 | ✅ 用户确认（2026-10-05） |
 
 ## 三腿对照表更新（按键版）
 
@@ -384,3 +385,118 @@ STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
 | 读按键 | `GPIO_ReadInputDataBit` | `HAL_GPIO_ReadPin` | `GPIOB->IDR & (1<<7)` |
 | 翻转 LED | 读-反-写三行 | **`HAL_GPIO_TogglePin` 一行** | `GPIOC->ODR ^= 1<<13` |
 | 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
+
+# 04 · 串口收发（HAL 版）✅ 已上板 2026-10-05
+
+### 硬件事实（三腿一致）
+
+| 项 | 值 | 来源 |
+|---|---|---|
+| 串口 | USART1：**PA9=TX、PA10=RX**，115200-8-N-1 | 原理图 P2 + 实测 |
+| 接线（外接 USB-TTL 时） | 模块 RX→板 A9、模块 TX→板 A10、GND→GND | **TX/RX 交叉**，【实测】双向通 |
+| 本腿时钟 | **APB2 = 64MHz**（HSI/2×16，APB2=HCLK，官方模板原样未动） | 步骤 6 的决定 |
+
+### 步骤 16 · 时钟与引脚：HAL 写法
+
+```c
+__HAL_RCC_GPIOA_CLK_ENABLE();
+__HAL_RCC_USART1_CLK_ENABLE();          /* USART1 在 APB2，64MHz */
+
+GPIO_InitStruct.Pin   = GPIO_PIN_9;
+GPIO_InitStruct.Mode  = GPIO_MODE_AF_PP;      /* 复用推挽：引脚控制权交给 USART */
+GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+GPIO_InitStruct.Pin  = GPIO_PIN_10;
+GPIO_InitStruct.Mode = GPIO_MODE_INPUT;       /* 方向显式拆出来 */
+GPIO_InitStruct.Pull = GPIO_NOPULL;           /* 浮空输入，电平听对方的 */
+HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+```
+
+和标准库对比：`GPIO_Mode_AF_PP` ↔ `GPIO_MODE_AF_PP`——**名字几乎一样，背后是同一个 CRH 格子**（PA9 → 格子 1 → CRH[3:0]=0b1011）。HAL 换了个大写拼写，本质没变。
+
+### 步骤 17 · 句柄 + HAL_UART_Init：BRR 它替你算
+
+HAL 的思路：所有参数填进一个**句柄**结构体，一次交给库：
+
+```c
+static UART_HandleTypeDef huart1;
+
+huart1.Instance          = USART1;            /* 哪个串口 */
+huart1.Init.BaudRate     = 115200;            /* 要多少波特率 */
+huart1.Init.WordLength   = UART_WORDLENGTH_8B;
+huart1.Init.StopBits     = UART_STOPBITS_1;
+huart1.Init.Parity       = UART_PARITY_NONE;
+huart1.Init.Mode         = UART_MODE_TX_RX;
+huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+HAL_UART_Init(&huart1);                       /* 库内部：算 BRR + 配 CR1/CR2 + 使能 */
+```
+
+#### 深挖 · HAL 替你算的 BRR：同一参数，另一个答案
+
+步骤 21（标准库章）手算过：72MHz 时 BRR=0x271。本腿 APB2 是 **64MHz**（HSI 路线），同一公式换个输入：
+
+```
+所需分频 = 64,000,000 / 16 / 115,200 = 34.7222...
+整数部分 34 = 0x22 → BRR[15:4]
+小数部分 0.7222 × 16 = 11.55 → HAL 四舍五入取 12 = 0xC → BRR[3:0]
+BRR = 0x22C = 0b0010 0010 1100
+              └ 34 ┘ └ 12 ┘
+```
+
+验算：实际波特率 = 64e6 / (16 × (34 + 12/16)) = **115207.4**，误差 **+0.006%**——UART 容差 ±2~3%，纹丝不动 ✓。
+
+> **本节最大的知识点**：波特率分频值是"相对你的总线时钟"算的。同一个 115200，72MHz 时写 0x271，64MHz 时写 0x22C。HAL 靠 `HAL_RCC_GetPCLK2Value()` 运行时取时钟自动适配；寄存器腿就得自己算。
+
+### 步骤 18 · 收发：HAL 的阻塞 API
+
+```c
+uint8_t banner[] = "=== STM32F103 USART1 READY - HAL (115200-8-N-1) ===
+...";
+HAL_UART_Transmit(&huart1, banner, sizeof(banner) - 1, HAL_MAX_DELAY);   /* 整块发出 */
+
+while (1)
+{
+  if (HAL_UART_Receive(&huart1, &b, 1, HAL_MAX_DELAY) == HAL_OK)  /* 收 1 字节 */
+  {
+    HAL_UART_Transmit(&huart1, &b, 1, HAL_MAX_DELAY);   /* 原样发回 */
+    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);             /* LED 反馈 */
+    g_rx_count++;
+  }
+}
+```
+
+#### 深挖 · 这两个 API 的壳里是什么？
+
+`HAL_UART_Transmit` 内部：逐字节 `等 TXE → 写 DR`——和我们标准库手写的 `uart1_send` 一模一样，只是套了个**超时**参数（传 `HAL_MAX_DELAY`=0xFFFFFFFF 就是不限时）。`HAL_UART_Receive` 内部：`等 RXNE → 读 DR`。**HAL 没有魔法，只是把轮询循环替你写好、加上了超时保险。** 代价：`HAL_UART_Receive` 收不到就一直阻塞——回显程序里这恰好是我们要的行为。
+
+### 步骤 19 · 编译烧录验证（实测）
+
+```
+UV4.exe -b Project.uvprojx -j0 -o build.log
+→ Program Size: Code=3528 RO-data=428 RW-data=20 ZI-data=1100
+→ 0 Error(s), 0 Warning(s)
+STM32_Programmer_CLI -c port=SWD -w f103-hal-lab/f103-hal-lab.axf -v -rst   （模板无 hex，烧 axf）
+→ Download verified successfully + MCU Reset
+```
+
+实测记录：
+
+| 操作 | 现象 | 结论 |
+|---|---|---|
+| 复位上电 | 横幅出现（带 `- HAL` 标记） | ✅ 发送链路通 |
+| 电脑发 `PING1234` | 原样回显 `PING1234` | ✅ 接收链路通 |
+| 发送期间绿灯 | 每字节翻转一次 | ✅ 联动正常 |
+
+> 体积对照：本章标准库 4160B vs HAL 3528B——**HAL 反而更小**。"寄存器<HAL<标准库"不是铁律，取决于谁带了更多自己的代码（本章标准库版多写了 str 工具函数）。
+
+## 三腿对照表更新（串口版）
+
+| 动作 | 标准库 | HAL | 寄存器（预告） |
+|---|---|---|---|
+| 使能时钟 | `RCC_APB2PeriphClockCmd` | `__HAL_RCC_USART1_CLK_ENABLE()` | `RCC->APB2ENR \|= 1<<14` |
+| 配引脚 | `GPIO_Mode_AF_PP` | `GPIO_MODE_AF_PP` | `CRH[3:0]=0xB, CRH[7:4]=0x4` |
+| 配串口 | `USART_Init` 结构体 | 填句柄 + `HAL_UART_Init` | 手写 `BRR=0x271` + `CR1` 三位 |
+| 发 1 字节 | 写 DR 等 TXE | `HAL_UART_Transmit` | 写 DR 等 TXE（裸） |
+| 收 1 字节 | 看 RXNE 读 DR | `HAL_UART_Receive` | 看 RXNE 读 DR（裸） |

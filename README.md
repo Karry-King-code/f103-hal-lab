@@ -9,8 +9,9 @@ STM32F103C8T6 精英板（嘉立创 v1.3）外设驱动学习项目，**HAL 库*
 | 章节 | 内容 | 状态 |
 |---|---|---|
 | [01-环境搭建与脚手架](docs/01-环境搭建与脚手架.md) | 官方模板裁剪、HAL 工程结构、编译烧录 | ✅ 脚手架编译通过 |
-| 02-GPIO输出-LED 1s闪烁 | GPIO/HAL_Delay/SysTick 知识点 | 待更新 |
-| 03-USART-串口收发 | HAL_UART + printf 重定向 | 待更新 |
+| 02-GPIO输出-LED 1s闪烁 | GPIO/HAL_Delay 中断派/SysTick | ✅ 上板验收 |
+| 03-GPIO输入-按键控LED | Pull 显式字段/TogglePin/非阻塞分片 | ✅ 上板验收 |
+| 04-USART-串口收发 | UART 句柄/HAL_UART_Init 自动算 BRR/阻塞收发 | ✅ 上板验收 |
 | （后续按任务清单推进） | | |
 
 ## 工程一览
