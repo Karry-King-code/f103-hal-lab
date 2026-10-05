@@ -2,10 +2,10 @@
   ******************************************************************************
   * @file    Templates/Src/main.c
   * @author  MCD Application Team
-  * @brief   Main program body（04 章：串口收发——HAL 版）
-  * @note    USART1 = PA9(TX)/PA10(RX)，115200-8-N-1，收什么回什么（echo）。
-  *          时钟仍是官方模板的 HSI->64MHz（APB2=64MHz），HAL 自己算 BRR。
-  *          每收到 1 字节：回显 + 翻转绿灯（PC13）。
+  * @brief   Main program body（05 章：按键控制蜂鸣器+继电器——HAL 版）
+  * @note    KEY1=PB7 蜂鸣器(PC15 高响)；KEY2=PB6 继电器(PC14 低吸合实测)。
+  *          串口命令 B/R/? 双通道验证；逻辑与标准库版完全同构。
+  *          时钟：官方模板 HSI->64MHz 原样。
   ******************************************************************************
   * @attention
   *
@@ -23,74 +23,165 @@
 #include "main.h"
 
 /* Private variables ---------------------------------------------------------*/
-static UART_HandleTypeDef huart1;    /* UART 句柄：HAL 靠它认人（实例+参数+状态全在里面） */
-volatile uint32_t g_rx_count = 0;    /* 已收字节数（调试器可读） */
+static UART_HandleTypeDef huart1;
+static uint8_t buzz_state = 0, relay_state = 0;
+volatile uint32_t g_rx_count = 0;
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void USART1_UART_Init(void);
+static void print_state(void);
+static uint8_t key_pressed(uint16_t pin);
+static void uart_str(const char *s);
+
+#define BUZZ_ON()   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET)
+#define BUZZ_OFF()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_RESET)
+#define RELAY_ON()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET)  /* low-active (measured) */
+#define RELAY_OFF() HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_SET)
 
 /**
   * @brief  Main program
   */
 int main(void)
 {
-  uint8_t b;
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   HAL_Init();
-
-  /* Configure the system clock to 64 MHz */
   SystemClock_Config();
 
-  /* ==== 时钟：GPIOA、GPIOC、USART1（在 APB2 上，64MHz） ==== */
+  /* ==== 时钟：GPIOA/B/C + USART1（APB2） ==== */
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_USART1_CLK_ENABLE();
 
-  /* ==== PA9=TX：复用推挽（引脚控制权交给 USART） ==== */
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  GPIO_InitStruct.Pin      = GPIO_PIN_9;
-  GPIO_InitStruct.Mode     = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Speed    = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /* ==== PA10=RX：浮空输入 ==== */
-  GPIO_InitStruct.Pin  = GPIO_PIN_10;
+  /* ==== 按键 PB7/PB6：上拉输入（Pull 显式字段） ==== */
+  GPIO_InitStruct.Pin  = GPIO_PIN_7 | GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /* ==== PC13 绿灯：回显反馈 ==== */
-  GPIO_InitStruct.Pin   = GPIO_PIN_13;
+  /* ==== PC13/14/15：推挽输出（一次配三脚） ==== */
+  GPIO_InitStruct.Pin   = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
   GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 初始：灭 */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* LED off */
+  RELAY_OFF();
+  BUZZ_OFF();
 
-  /* ==== USART1：115200-8-N-1 ==== */
+  /* ==== USART1 115200-8-N-1 ==== */
+  GPIO_InitStruct.Pin      = GPIO_PIN_9;
+  GPIO_InitStruct.Mode     = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Speed    = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  GPIO_InitStruct.Pin  = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   USART1_UART_Init();
 
-  /* ==== 上电横幅（HAL_UART_Transmit：阻塞发一整块） ==== */
-  uint8_t banner[] = "\r\n=== STM32F103 USART1 READY - HAL (115200-8-N-1) ===\r\n"
-                     "Type anything, I will echo it back. LED toggles per byte.\r\n";
-  HAL_UART_Transmit(&huart1, banner, sizeof(banner) - 1, HAL_MAX_DELAY);
+  uart_str("\r\n=== CH05 BUZZER+RELAY (HAL) READY ===\r\n");
+  print_state();
 
   /* Infinite loop */
   while (1)
   {
-    /* 收 1 字节（阻塞轮询模式）；读完成 HAL 内部已清 RXNE */
-    if (HAL_UART_Receive(&huart1, &b, 1, HAL_MAX_DELAY) == HAL_OK)
+    if (key_pressed(GPIO_PIN_7))
     {
-      HAL_UART_Transmit(&huart1, &b, 1, HAL_MAX_DELAY);  /* 原样发回 */
-      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+      buzz_state ^= 1;
+      if (buzz_state) BUZZ_ON(); else BUZZ_OFF();
+      uart_str("[KEY1/CMD B] ");
+      print_state();
+    }
+    if (key_pressed(GPIO_PIN_6))
+    {
+      relay_state ^= 1;
+      if (relay_state) RELAY_ON(); else RELAY_OFF();
+      uart_str("[KEY2/CMD R] ");
+      print_state();
+    }
+
+    uint8_t b;
+    if (HAL_UART_Receive(&huart1, &b, 1, 10) == HAL_OK)   /* 10ms 超时轮询 */
+    {
       g_rx_count++;
+      switch (b)
+      {
+      case 'B':
+      case 'b':
+        buzz_state ^= 1;
+        if (buzz_state) BUZZ_ON(); else BUZZ_OFF();
+        uart_str("[KEY1/CMD B] ");
+        print_state();
+        break;
+      case 'R':
+      case 'r':
+        relay_state ^= 1;
+        if (relay_state) RELAY_ON(); else RELAY_OFF();
+        uart_str("[KEY2/CMD R] ");
+        print_state();
+        break;
+      case '?':
+        print_state();
+        break;
+      default:
+        break;
+      }
     }
   }
 }
 
+static uint16_t uart_len(const char *s)
+{
+  uint16_t n = 0;
+  while (s[n]) n++;
+  return n;
+}
+
+static void uart_str(const char *s)
+{
+  HAL_UART_Transmit(&huart1, (uint8_t *)s, (uint16_t)uart_len(s), HAL_MAX_DELAY);
+}
+
+static void print_state(void)
+{
+  uart_str("[STATE] BUZZER=");
+  uart_str(buzz_state ? "ON" : "OFF");
+  uart_str("  RELAY=");
+  uart_str(relay_state ? "ON(closed)" : "OFF(open)");
+  uart_str("\r\n");
+}
+
 /**
-  * @brief  USART1 初始化：填句柄 -> HAL_UART_Init（内部配 BRR/CR1 并使能）
+  * @brief  按键：沿检测+双消抖+等释放（03 章同款，加 pin 参数）
+  */
+static uint8_t key_pressed(uint16_t pin)
+{
+  static uint8_t last7 = 1, last6 = 1;
+  uint8_t *last = (pin == GPIO_PIN_7) ? &last7 : &last6;
+  uint8_t now = (HAL_GPIO_ReadPin(GPIOB, pin) == GPIO_PIN_RESET) ? 0 : 1;
+  uint8_t evt = 0;
+
+  if (*last == 1 && now == 0)
+  {
+    HAL_Delay(10);
+    if (HAL_GPIO_ReadPin(GPIOB, pin) == GPIO_PIN_RESET)
+    {
+      evt = 1;
+      while (HAL_GPIO_ReadPin(GPIOB, pin) == GPIO_PIN_RESET)
+      {
+      }
+      HAL_Delay(10);
+    }
+  }
+  *last = now;
+  return evt;
+}
+
+/**
+  * @brief  USART1 初始化（04 章同款）
   */
 static void USART1_UART_Init(void)
 {
@@ -104,7 +195,7 @@ static void USART1_UART_Init(void)
   huart1.Init.OverSampling           = UART_OVERSAMPLING_16;
   if (HAL_UART_Init(&huart1) != HAL_OK)
   {
-    while (1);                         /* 初始化失败：停在这里便于排查 */
+    while (1);
   }
 }
 

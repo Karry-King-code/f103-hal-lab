@@ -500,3 +500,51 @@ STM32_Programmer_CLI -c port=SWD -w f103-hal-lab/f103-hal-lab.axf -v -rst   （�
 | 配串口 | `USART_Init` 结构体 | 填句柄 + `HAL_UART_Init` | 手写 `BRR=0x271` + `CR1` 三位 |
 | 发 1 字节 | 写 DR 等 TXE | `HAL_UART_Transmit` | 写 DR 等 TXE（裸） |
 | 收 1 字节 | 看 RXNE 读 DR | `HAL_UART_Receive` | 看 RXNE 读 DR（裸） |
+
+# 05 · 蜂鸣器 + 继电器（HAL 版）✅ 已上板 2026-10-06
+
+### 硬件事实
+
+与标准库章完全一致（PC15 蜂鸣器高响 / PC14 继电器**低吸合实测** / PC13 心跳灯），此处不重复——**硬件事实三腿只有一份**。PC14/15 备份域引脚注意事项同前。
+
+### 步骤 20 · HAL 写法：三脚一次配 + 有效电平宏
+
+```c
+GPIO_InitStruct.Pin   = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
+GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+GPIO_InitStruct.Pull  = GPIO_NOPULL;
+GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);          /* 三格半字节一次写好 */
+
+#define BUZZ_ON()   HAL_GPIO_WritePin(GPIOC, GPIO_PIN_15, GPIO_PIN_SET)
+#define RELAY_ON()  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_14, GPIO_PIN_RESET)  /* 低吸合(实测) */
+```
+
+和标准库的差异只有函数名：`GPIO_WriteBit` ↔ `HAL_GPIO_WritePin`，`Bit_RESET` ↔ `GPIO_PIN_RESET`——**同一颗芯片、同一个 CRH 格子**。
+
+### 步骤 21 · 新知识点：HAL_UART_Receive 的"超时轮询"
+
+04 章回显用的是 `HAL_MAX_DELAY`（收不到就死等）。本章主循环还要扫按键，死等会卡住按键——改成 **10ms 超时轮询**：
+
+```c
+if (HAL_UART_Receive(&huart1, &b, 1, 10) == HAL_OK)   /* 最多等 10ms */
+```
+
+内部就是"轮询 RXNE，数着 uwTick 到 10ms 就返回 HAL_TIMEOUT"。这就是**非阻塞化的最朴素手段**：超时短一点，主循环就"既看串口又看按键"。
+
+> ⚠️ 函数式宏（`BUZZ_ON()`）**不能放进三目运算符**取用：`(cond ? BUZZ_ON : BUZZ_OFF)()` 预处理后变成 `(cond ? 函数调用表达式 : 函数调用表达式)()`——对一个 void 表达式再取函数调用，编译必错（本章实测 8 errors）。老老实实 `if/else`。
+
+### 步骤 22 · 编译烧录验证（实测）
+
+```
+Program Size: Code=4048 RO-data=312 RW-data=24 ZI-data=1096 → 0 Error(s), 0 Warning(s)
+Download verified successfully（cd 后相对路径烧 .axf）
+```
+
+| 操作 | 现象 | 结论 |
+|---|---|---|
+| 复位 | 横幅 `=== CH05 BUZZER+RELAY (HAL) READY ===` | ✅ |
+| 串口 `B`+`R` | BUZZER=ON / RELAY=ON(closed) 依次回报 | ✅ |
+| SWD 读 GPIOC_ODR | 0x0000A000（PC15=1 蜂鸣器得电、PC14=0 低吸合） | ✅ 与标准库版**逐位一致** |
+| 按 KEY1/KEY2 | 与串口命令同路径 | 🔶 待用户按键确认 |
+
