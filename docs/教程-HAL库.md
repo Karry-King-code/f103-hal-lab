@@ -546,7 +546,7 @@ Download verified successfully（cd 后相对路径烧 .axf）
 | 复位 | 横幅 `=== CH05 BUZZER+RELAY (HAL) READY ===` | ✅ |
 | 串口 `B`+`R` | BUZZER=ON / RELAY=ON(closed) 依次回报 | ✅ |
 | SWD 读 GPIOC_ODR | 0x0000A000（PC15=1 蜂鸣器得电、PC14=0 低吸合） | ✅ 与标准库版**逐位一致** |
-| 按 KEY1/KEY2 | 与串口命令同路径 | 🔶 待用户按键确认 |
+| 按 KEY1/KEY2 | 与串口命令同路径 | ✅ 用户实测（2026-10-06）：KEY1 蜂鸣器有效，继电器"咚"声确认 |
 
 # 07 · 光敏 DO 读取（HAL 版）✅ 已上板 2026-10-06
 
