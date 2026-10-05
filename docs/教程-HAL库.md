@@ -548,3 +548,12 @@ Download verified successfully（cd 后相对路径烧 .axf）
 | SWD 读 GPIOC_ODR | 0x0000A000（PC15=1 蜂鸣器得电、PC14=0 低吸合） | ✅ 与标准库版**逐位一致** |
 | 按 KEY1/KEY2 | 与串口命令同路径 | 🔶 待用户按键确认 |
 
+# 07 · 光敏 DO 读取（HAL 版）✅ 已上板 2026-10-06
+
+硬件事实与"烟雾替身"原理见标准库章。HAL 差异只有函数名：`HAL_GPIO_ReadPin`（返回 `GPIO_PIN_SET/RESET`，记得转成 0/1），输入模式 `GPIO_MODE_INPUT`+`GPIO_NOPULL`（显式浮空）。
+
+主循环沿用 05 章的 **10ms 超时轮询**（`HAL_UART_Receive(...,10)`），既扫电平变化又收 `'?'` 查询。
+
+```
+Program Size: Code=3844 → 0 Error(s), 0 Warning(s)；烧 .axf verified
+实测：横幅+DO=1+查询 DO=1 ✅（与标准库版一致）
