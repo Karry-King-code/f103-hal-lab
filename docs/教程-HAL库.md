@@ -281,4 +281,106 @@ MCU Reset
 | 2 | 工程文件名 | 官方模板叫 Project.uvprojx，别找 f103-hal-lab.uvprojx | 认准 MDK-ARM/Project.uvprojx |
 
 ---
+---
 
+# 03 · 按键控制 LED（HAL 版：按一下开始闪，再按一下停）🔶 代码已上板待确认
+
+> 与标准库版（f103-spl-lab 03 章）逻辑一字不差，全部函数换成 HAL 写法。新知识点：**HAL 把"上拉"从隐藏动作变成了显式字段**，以及 **HAL 自带翻转函数**。
+
+## 硬件事实（实测，三腿一致）
+
+| 目标 | 引脚 | 依据 |
+|---|---|---|
+| 按键 KEY1 | PB7（按下接 GND，低有效，无外部上拉） | 【文档】原理图 P3 |
+| 绿灯 | PC13（低电平亮） | 【实测】02 章 |
+
+## 步骤 11 · 配置：HAL 的"Pull 字段"比标准库诚实
+
+标准库版（知识卡 B）里踩过一个隐形坑：`GPIO_Mode_IPU` 配置时，**上拉还是下拉由 ODR 位决定**，标准库在 `GPIO_Init` 内部偷偷帮你把 ODR 置 1——不看源码根本不知道。
+
+HAL 把这个动作摆到了台面上，配置结构体里**多了一个标准库没有的字段**：
+
+```c
+GPIO_InitStruct.Pin  = GPIO_PIN_7;
+GPIO_InitStruct.Mode = GPIO_MODE_INPUT;    /* 方向：输入（HAL 拆出来了！） */
+GPIO_InitStruct.Pull = GPIO_PULLUP;        /* 上拉/下拉/浮空，显式三选一 */
+HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+```
+
+对照记忆：
+
+| | 标准库 | HAL |
+|---|---|---|
+| 方向 | 折叠在 `GPIO_Mode`（IPU 里含"输入"） | 独立字段 `Mode = GPIO_MODE_INPUT` |
+| 上拉/下拉 | 隐藏（IPU 内部置 ODR） | **显式字段 `Pull = GPIO_PULLUP`** |
+| 推挽输出 | `GPIO_Mode_Out_PP` | `Mode = GPIO_MODE_OUTPUT_PP` + `Pull = GPIO_NOPULL` |
+
+HAL 的 `GPIO_MODE_INPUT` / `GPIO_MODE_OUTPUT_PP` 把"方向"从 CNF/MODE 的折叠编码里解放出来——这是 HAL 比 SPL 好读的实锤之一。
+
+## 步骤 12 · 读按键与翻转：HAL 的三个顺手函数
+
+```c
+HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7)      /* 读引脚：返回 GPIO_PIN_SET(1)/GPIO_PIN_RESET(0) */
+HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 写引脚 */
+HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);  /* ★ 翻转：HAL 自带，标准库没有！ */
+```
+
+- `HAL_GPIO_TogglePin` 内部就是 `ODR ^= pin`（读-反-写）——标准库版我们手写的三行，HAL 一个函数搞定；
+- `HAL_GPIO_ReadPin` 返回的是枚举 `GPIO_PinState`，判断按下用 `== GPIO_PIN_RESET`（0=按下）。
+
+## 步骤 13 · 完整逻辑（与标准库版同构，只贴关键）
+
+```c
+static uint8_t running = 0;     /* 开关 */
+static uint16_t slice = 0;      /* 10ms 片计数 */
+
+while (1)
+{
+  if (key_pressed())            /* ① 每片照看按键（static last 抓沿+消抖+等释放） */
+  {
+    running = !running;
+    if (running == 0)
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  /* 停止：灭 */
+  }
+  if (running)                  /* ② 非阻塞分片 */
+  {
+    if (++slice >= 50)          /* 50 片 x 10ms = 500ms */
+    {
+      slice = 0;
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);   /* 每 500ms 翻转 = 1s 周期 */
+    }
+  }
+  HAL_Delay(10);                /* ③ 节拍器 */
+}
+```
+
+`key_pressed()` 的消抖/等释放与标准库版逐行对应，只是 `delay_ms(10)`→`HAL_Delay(10)`、读引脚函数替换。**非阻塞分片的思想不变**——变的是工具。
+
+## 步骤 14 · 编译烧录（实测）
+
+```
+UV4.exe -b Project.uvprojx -j0 -o build.log
+→ Program Size: Code=4106 RO-data=340 RW-data=16 ZI-data=1168
+→ 0 Error(s), 0 Warning(s), 15 秒
+STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
+→ Download verified successfully + MCU Reset
+```
+
+体积继续膨胀（标准库版 3124B → HAL 版 4462B）：`HAL_Delay/Toggle/Read/Write` 一套库函数比标准库的更重。
+
+## 步骤 15 · 验收
+
+| 操作 | 预期 |
+|---|---|
+| 按一下 KEY1 | 绿灯 1 秒周期闪烁 |
+| 再按一下 | 灯灭、停止 |
+| 再按 | 恢复闪烁 |
+
+## 三腿对照表更新（按键版）
+
+| 动作 | 标准库 | HAL | 寄存器（预告） |
+|---|---|---|---|
+| PB7 上拉输入 | `GPIO_Mode_IPU`（上拉藏在 ODR） | `Mode=INPUT` + `Pull=GPIO_PULLUP`（显式） | `CRL[31:28]=0b1000` + `ODR\|=1<<7` |
+| 读按键 | `GPIO_ReadInputDataBit` | `HAL_GPIO_ReadPin` | `GPIOB->IDR & (1<<7)` |
+| 翻转 LED | 读-反-写三行 | **`HAL_GPIO_TogglePin` 一行** | `GPIOC->ODR ^= 1<<13` |
+| 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
