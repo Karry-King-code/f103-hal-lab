@@ -413,7 +413,7 @@ GPIO_InitStruct.Pull = GPIO_NOPULL;           /* 浮空输入，电平听对方�
 HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 ```
 
-和标准库对比：`GPIO_Mode_AF_PP` ↔ `GPIO_MODE_AF_PP`——**名字几乎一样，背后是同一个 CRH 格子**（PA9 → 格子 1 → CRH[3:0]=0b1011）。HAL 换了个大写拼写，本质没变。
+和标准库对比：`GPIO_Mode_AF_PP` ↔ `GPIO_MODE_AF_PP`——**名字几乎一样，背后是同一个 CRH 格子**（PA9 → CRH[7:4]=0b1011）。HAL 换了个大写拼写，本质没变。
 
 ### 步骤 17 · 句柄 + HAL_UART_Init：BRR 它替你算
 
