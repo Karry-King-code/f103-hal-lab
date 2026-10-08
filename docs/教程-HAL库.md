@@ -599,7 +599,7 @@ Program Size: Code=3844 → 0 Error(s), 0 Warning(s)；烧 .axf verified
 | 腿 | 代码文件 | 体积 | 实测结果 |
 |---|---|---|---|
 | 标准库 | `ch5_6_dht11_light_spl.c` | 4760B | 光敏=1 / err=0 / 湿度37% / 温度31°C ✅ |
-| HAL | `ch5_6_dht11_light_hal.c` | 4160B | 同上 ✅ |
+| HAL | `ch5_6_dht11_light_hal.c` | 5232B | 同上 + **OLED 四行显示（HAL 函数写软件 I2C）** ✅ |
 | 寄存器 | `ch8_integration_screen.c` | 3078B | 同上 + **OLED 屏幕四行实时显示** ✅ |
 
 ### 接线表（唯一正确版本，照这个接）
