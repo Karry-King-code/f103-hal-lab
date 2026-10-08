@@ -17,7 +17,7 @@
 | 扩展 | OLED 显示 | 08 章 | ✅ 已验收 | 用户确认屏幕三行字+实时联动 |
 ---
 
-## 1. 开发板与硬件事实
+## 开发板与硬件事实
 
 开发板：**STM32F103C8T6 精英板（嘉立创 v1.3）**。引脚事实（来自原理图，人工逐区核对）：
 
@@ -36,7 +36,7 @@
 
 ---
 
-## 2. 这个工程从哪来（重要：来源与改动清单）
+## 这个工程从哪来（重要：来源与改动清单）
 
 **来源**：ST 官方固件包 **STM32Cube_FW_F1_V1.8.6**（本机 `C:\Users\26476\STM32Cube\Repository\`，由 STM32CubeMX 安装）中的官方模板 `Projects\STM32F103RB-Nucleo\Templates`。
 
@@ -53,7 +53,7 @@
 
 ---
 
-## 3. 软件安装
+## 软件安装
 
 与标准库仓库完全一致，不重复展开，只列清单：
 
@@ -75,7 +75,7 @@
 
 ---
 
-## 4. 编译
+## 编译
 
 打开 `MDK-ARM/Project.uvprojx`，F7。预期：
 
@@ -88,7 +88,7 @@ Program Size: Code=1838 RO-data=302 RW-data=16 ZI-data=1024
 
 ---
 
-## 5. 烧录
+## 烧录
 
 ```
 STM32_Programmer_CLI -c port=SWD -w MDK-ARM\f103-hal-lab\f103-hal-lab.hex -v -rst
@@ -98,7 +98,7 @@ STM32_Programmer_CLI -c port=SWD -w MDK-ARM\f103-hal-lab\f103-hal-lab.hex -v -rs
 
 ---
 
-## 6. HAL 工程标准分层（每个文件的角色）
+## HAL 工程标准分层（每个文件的角色）
 
 ```
 f103-hal-lab/
@@ -127,7 +127,7 @@ f103-hal-lab/
 
 ---
 
-## 7. 上电到 main()（与 SPL 版对比）
+## 上电到 main()（与 SPL 版对比）
 
 ```
 复位 → startup_stm32f103xb.s: Reset_Handler
@@ -143,11 +143,11 @@ main() 内:
 
 ---
 
-## 8. Git 提交规矩
+## Git 提交规矩
 
 同标准库仓库：每章一 commit，格式 `章节: 内容 (HAL)`。
 
-## 9. 常见问题
+## 常见问题
 
 | 现象 | 原因 | 解决 |
 |---|---|---|
@@ -155,13 +155,13 @@ main() 内:
 | 编译慢 | HAL 全量源码在编译 | 正常现象（~20s），镜像不含未用代码 |
 | 其他 | 同标准库仓库 01 章第 9 节 | — |
 
-## 10. 下一步
+## 下一步
 
 02-GPIO输出：用 `HAL_GPIO_WritePin` 点亮 PC14，`HAL_Delay` 实现 1s 闪烁，并讲清 GPIO 推挽输出与 HAL_Delay 背后的 SysTick。
 
 ---
 
-# 任务一 · LED 1s 闪烁（HAL 版）✅ 已验收 2026-10-04
+# 任务一 · 点亮 LED 灯
 
 > 同一个灯（PC13 绿灯），换 HAL 库实现。时钟 64MHz（模板默认 HSI），delay 用 HAL_Delay。
 
@@ -173,14 +173,14 @@ main() 内:
 | 继电器 | PC14（想听咔哒就加它） | 【实测】 |
 | PWR 红灯 | 常亮，不受控 | 【实测】丝印 PWR |
 
-## 步骤 6 · 预检时钟：为什么我"不动"官方模板的时钟配置
+## 预检时钟：为什么我"不动"官方模板的时钟配置
 
 **在哪看**：`Src/main.c` 的 `SystemClock_Config()`。
 **看什么**：官方模板配的是 **内部 HSI → 64MHz**（不是外部晶振 72M）。
 **为什么不改**：HSI 在芯片内部，永远起振、绝对可靠；HAL_Init/HAL_Delay 的 1ms 心跳由 HAL_RCC_ClockConfig 自动校准到实际频率，64M 还是 72M 延时都准。切 HSE 72M 留给时钟章节练手。
 **我看到的**：模板 main() 里有一行官方预留注释 `/* Add your application code here */`——**代码就加在这里，这是 ST 规定的位置**。
 
-## 步骤 7 · 写代码（改 `Src/main.c`）
+## 写代码（改 `Src/main.c`）
 
 main() 最终长这样（新增部分带注释）：
 
@@ -232,7 +232,7 @@ int main(void)
 
 **HAL_Delay 为什么能精确**：`SystemClock_Config()` 配完时钟后 HAL 会把 SysTick 重载值更新为"实际主频/1000"——64MHz 主频下 = 64000，一样是 1ms 心跳。改频率不影响延时的准确性（库自己会换算）。
 
-## 步骤 8 · 编译
+## 编译
 
 **在哪做**：`MDK-ARM` 目录（工程文件叫 **Project.uvprojx**，注意不是 f103-hal-lab.uvprojx）。
 
@@ -250,7 +250,7 @@ Build Time Elapsed:  00:00:18
 
 **两个注意**：①HAL 全量源码参与编译，比标准库版慢（18 秒 vs 1 秒），但没用的函数不会链进镜像；②产物在 `MDK-ARM103-hal-lab103-hal-lab.axf`，**官方模板没开 hex 选项**——不影响，CubeProgrammer 直接支持 .axf（ELF 格式，还带调试符号）。
 
-## 步骤 9 · 烧录
+## 烧录
 
 ```
 STM32_Programmer_CLI -c port=SWD -w MDK-ARM103-hal-lab103-hal-lab.axf -v -rst
@@ -265,7 +265,7 @@ Download verified successfully
 MCU Reset
 ```
 
-## 步骤 10 · 验收
+## 验收
 
 **现象**：绿灯 1 秒闪——和标准库版现象完全一样，芯片里跑的却是 HAL 程序。
 
@@ -296,109 +296,7 @@ MCU Reset
 ---
 ---
 
-# 任务三 · 按键控制 LED（HAL 版）✅ 已验收 2026-10-05
-
-> 与标准库版（f103-spl-lab 03 章）逻辑一字不差，全部函数换成 HAL 写法。新知识点：**HAL 把"上拉"从隐藏动作变成了显式字段**，以及 **HAL 自带翻转函数**。
-
-## 硬件事实（实测，三腿一致）
-
-| 目标 | 引脚 | 依据 |
-|---|---|---|
-| 按键 KEY1 | PB7（按下接 GND，低有效，无外部上拉） | 【文档】原理图 P3 |
-| 绿灯 | PC13（低电平亮） | 【实测】02 章 |
-
-## 步骤 11 · 配置：HAL 的"Pull 字段"比标准库诚实
-
-标准库版（知识卡 B）里踩过一个隐形坑：`GPIO_Mode_IPU` 配置时，**上拉还是下拉由 ODR 位决定**，标准库在 `GPIO_Init` 内部偷偷帮你把 ODR 置 1——不看源码根本不知道。
-
-HAL 把这个动作摆到了台面上，配置结构体里**多了一个标准库没有的字段**：
-
-```c
-GPIO_InitStruct.Pin  = GPIO_PIN_7;
-GPIO_InitStruct.Mode = GPIO_MODE_INPUT;    /* 方向：输入（HAL 拆出来了！） */
-GPIO_InitStruct.Pull = GPIO_PULLUP;        /* 上拉/下拉/浮空，显式三选一 */
-HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-```
-
-对照记忆：
-
-| | 标准库 | HAL |
-|---|---|---|
-| 方向 | 折叠在 `GPIO_Mode`（IPU 里含"输入"） | 独立字段 `Mode = GPIO_MODE_INPUT` |
-| 上拉/下拉 | 隐藏（IPU 内部置 ODR） | **显式字段 `Pull = GPIO_PULLUP`** |
-| 推挽输出 | `GPIO_Mode_Out_PP` | `Mode = GPIO_MODE_OUTPUT_PP` + `Pull = GPIO_NOPULL` |
-
-HAL 的 `GPIO_MODE_INPUT` / `GPIO_MODE_OUTPUT_PP` 把"方向"从 CNF/MODE 的折叠编码里解放出来——这是 HAL 比 SPL 好读的实锤之一。
-
-## 步骤 12 · 读按键与翻转：HAL 的三个顺手函数
-
-```c
-HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7)      /* 读引脚：返回 GPIO_PIN_SET(1)/GPIO_PIN_RESET(0) */
-HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 写引脚 */
-HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);  /* ★ 翻转：HAL 自带，标准库没有！ */
-```
-
-- `HAL_GPIO_TogglePin` 内部就是 `ODR ^= pin`（读-反-写）——标准库版我们手写的三行，HAL 一个函数搞定；
-- `HAL_GPIO_ReadPin` 返回的是枚举 `GPIO_PinState`，判断按下用 `== GPIO_PIN_RESET`（0=按下）。
-
-## 步骤 13 · 完整逻辑（与标准库版同构，只贴关键）
-
-```c
-static uint8_t running = 0;     /* 开关 */
-static uint16_t slice = 0;      /* 10ms 片计数 */
-
-while (1)
-{
-  if (key_pressed())            /* ① 每片照看按键（static last 抓沿+消抖+等释放） */
-  {
-    running = !running;
-    if (running == 0)
-      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  /* 停止：灭 */
-  }
-  if (running)                  /* ② 非阻塞分片 */
-  {
-    if (++slice >= 50)          /* 50 片 x 10ms = 500ms */
-    {
-      slice = 0;
-      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);   /* 每 500ms 翻转 = 1s 周期 */
-    }
-  }
-  HAL_Delay(10);                /* ③ 节拍器 */
-}
-```
-
-`key_pressed()` 的消抖/等释放与标准库版逐行对应，只是 `delay_ms(10)`→`HAL_Delay(10)`、读引脚函数替换。**非阻塞分片的思想不变**——变的是工具。
-
-## 步骤 14 · 编译烧录（实测）
-
-```
-UV4.exe -b Project.uvprojx -j0 -o build.log
-→ Program Size: Code=4106 RO-data=340 RW-data=16 ZI-data=1168
-→ 0 Error(s), 0 Warning(s), 15 秒
-STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
-→ Download verified successfully + MCU Reset
-```
-
-体积继续膨胀（标准库版 3124B → HAL 版 4462B）：`HAL_Delay/Toggle/Read/Write` 一套库函数比标准库的更重。
-
-## 步骤 15 · 验收
-
-| 操作 | 预期 | 实测 |
-|---|---|---|
-| 按一下 KEY1 | 绿灯 1 秒周期闪烁 | ✅ 用户确认（2026-10-05） |
-| 再按一下 | 灯灭、停止 | ✅ 用户确认（2026-10-05） |
-| 再按 | 恢复闪烁 | ✅ 用户确认（2026-10-05） |
-
-## 三腿对照表更新（按键版）
-
-| 动作 | 标准库 | HAL | 寄存器（预告） |
-|---|---|---|---|
-| PB7 上拉输入 | `GPIO_Mode_IPU`（上拉藏在 ODR） | `Mode=INPUT` + `Pull=GPIO_PULLUP`（显式） | `CRL[31:28]=0b1000` + `ODR\|=1<<7` |
-| 读按键 | `GPIO_ReadInputDataBit` | `HAL_GPIO_ReadPin` | `GPIOB->IDR & (1<<7)` |
-| 翻转 LED | 读-反-写三行 | **`HAL_GPIO_TogglePin` 一行** | `GPIOC->ODR ^= 1<<13` |
-| 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
-
-# 任务二 · 串口收发（HAL 版）✅ 已上板 2026-10-05
+# 任务二 · 串口收发
 
 ### 硬件事实（三腿一致）
 
@@ -408,7 +306,7 @@ STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
 | 接线（外接 USB-TTL 时） | 模块 RX→板 A9、模块 TX→板 A10、GND→GND | **TX/RX 交叉**，【实测】双向通 |
 | 本腿时钟 | **APB2 = 64MHz**（HSI/2×16，APB2=HCLK，官方模板原样未动） | 步骤 6 的决定 |
 
-### 步骤 16 · 时钟与引脚：HAL 写法
+### 时钟与引脚：HAL 写法
 
 ```c
 __HAL_RCC_GPIOA_CLK_ENABLE();
@@ -427,7 +325,7 @@ HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 和标准库对比：`GPIO_Mode_AF_PP` ↔ `GPIO_MODE_AF_PP`——**名字几乎一样，背后是同一个 CRH 格子**（PA9 → CRH[7:4]=0b1011）。HAL 换了个大写拼写，本质没变。
 
-### 步骤 17 · 句柄 + HAL_UART_Init：BRR 它替你算
+### 句柄 + HAL_UART_Init：BRR 它替你算
 
 HAL 的思路：所有参数填进一个**句柄**结构体，一次交给库：
 
@@ -461,7 +359,7 @@ BRR = 0x22C = 0b0010 0010 1100
 
 > **本节最大的知识点**：波特率分频值是"相对你的总线时钟"算的。同一个 115200，72MHz 时写 0x271，64MHz 时写 0x22C。HAL 靠 `HAL_RCC_GetPCLK2Value()` 运行时取时钟自动适配；寄存器腿就得自己算。
 
-### 步骤 18 · 收发：HAL 的阻塞 API
+### 收发：HAL 的阻塞 API
 
 ```c
 uint8_t banner[] = "=== STM32F103 USART1 READY - HAL (115200-8-N-1) ===
@@ -483,7 +381,7 @@ while (1)
 
 `HAL_UART_Transmit` 内部：逐字节 `等 TXE → 写 DR`——和我们标准库手写的 `uart1_send` 一模一样，只是套了个**超时**参数（传 `HAL_MAX_DELAY`=0xFFFFFFFF 就是不限时）。`HAL_UART_Receive` 内部：`等 RXNE → 读 DR`。**HAL 没有魔法，只是把轮询循环替你写好、加上了超时保险。** 代价：`HAL_UART_Receive` 收不到就一直阻塞——回显程序里这恰好是我们要的行为。
 
-### 步骤 19 · 编译烧录验证（实测）
+### 编译烧录验证（实测）
 
 ```
 UV4.exe -b Project.uvprojx -j0 -o build.log
@@ -513,13 +411,115 @@ STM32_Programmer_CLI -c port=SWD -w f103-hal-lab/f103-hal-lab.axf -v -rst   （�
 | 发 1 字节 | 写 DR 等 TXE | `HAL_UART_Transmit` | 写 DR 等 TXE（裸） |
 | 收 1 字节 | 看 RXNE 读 DR | `HAL_UART_Receive` | 看 RXNE 读 DR（裸） |
 
-# 任务四 · 按键控蜂鸣器+继电器（HAL 版）✅ 已上板 2026-10-06
+# 任务三 · 按键控制 LED
+
+> 与标准库版（f103-spl-lab 03 章）逻辑一字不差，全部函数换成 HAL 写法。新知识点：**HAL 把"上拉"从隐藏动作变成了显式字段**，以及 **HAL 自带翻转函数**。
+
+## 硬件事实（实测，三腿一致）
+
+| 目标 | 引脚 | 依据 |
+|---|---|---|
+| 按键 KEY1 | PB7（按下接 GND，低有效，无外部上拉） | 【文档】原理图 P3 |
+| 绿灯 | PC13（低电平亮） | 【实测】02 章 |
+
+## 配置：HAL 的"Pull 字段"比标准库诚实
+
+标准库版（知识卡 B）里踩过一个隐形坑：`GPIO_Mode_IPU` 配置时，**上拉还是下拉由 ODR 位决定**，标准库在 `GPIO_Init` 内部偷偷帮你把 ODR 置 1——不看源码根本不知道。
+
+HAL 把这个动作摆到了台面上，配置结构体里**多了一个标准库没有的字段**：
+
+```c
+GPIO_InitStruct.Pin  = GPIO_PIN_7;
+GPIO_InitStruct.Mode = GPIO_MODE_INPUT;    /* 方向：输入（HAL 拆出来了！） */
+GPIO_InitStruct.Pull = GPIO_PULLUP;        /* 上拉/下拉/浮空，显式三选一 */
+HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+```
+
+对照记忆：
+
+| | 标准库 | HAL |
+|---|---|---|
+| 方向 | 折叠在 `GPIO_Mode`（IPU 里含"输入"） | 独立字段 `Mode = GPIO_MODE_INPUT` |
+| 上拉/下拉 | 隐藏（IPU 内部置 ODR） | **显式字段 `Pull = GPIO_PULLUP`** |
+| 推挽输出 | `GPIO_Mode_Out_PP` | `Mode = GPIO_MODE_OUTPUT_PP` + `Pull = GPIO_NOPULL` |
+
+HAL 的 `GPIO_MODE_INPUT` / `GPIO_MODE_OUTPUT_PP` 把"方向"从 CNF/MODE 的折叠编码里解放出来——这是 HAL 比 SPL 好读的实锤之一。
+
+## 读按键与翻转：HAL 的三个顺手函数
+
+```c
+HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7)      /* 读引脚：返回 GPIO_PIN_SET(1)/GPIO_PIN_RESET(0) */
+HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 写引脚 */
+HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);  /* ★ 翻转：HAL 自带，标准库没有！ */
+```
+
+- `HAL_GPIO_TogglePin` 内部就是 `ODR ^= pin`（读-反-写）——标准库版我们手写的三行，HAL 一个函数搞定；
+- `HAL_GPIO_ReadPin` 返回的是枚举 `GPIO_PinState`，判断按下用 `== GPIO_PIN_RESET`（0=按下）。
+
+## 完整逻辑（与标准库版同构，只贴关键）
+
+```c
+static uint8_t running = 0;     /* 开关 */
+static uint16_t slice = 0;      /* 10ms 片计数 */
+
+while (1)
+{
+  if (key_pressed())            /* ① 每片照看按键（static last 抓沿+消抖+等释放） */
+  {
+    running = !running;
+    if (running == 0)
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);  /* 停止：灭 */
+  }
+  if (running)                  /* ② 非阻塞分片 */
+  {
+    if (++slice >= 50)          /* 50 片 x 10ms = 500ms */
+    {
+      slice = 0;
+      HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);   /* 每 500ms 翻转 = 1s 周期 */
+    }
+  }
+  HAL_Delay(10);                /* ③ 节拍器 */
+}
+```
+
+`key_pressed()` 的消抖/等释放与标准库版逐行对应，只是 `delay_ms(10)`→`HAL_Delay(10)`、读引脚函数替换。**非阻塞分片的思想不变**——变的是工具。
+
+## 编译烧录（实测）
+
+```
+UV4.exe -b Project.uvprojx -j0 -o build.log
+→ Program Size: Code=4106 RO-data=340 RW-data=16 ZI-data=1168
+→ 0 Error(s), 0 Warning(s), 15 秒
+STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
+→ Download verified successfully + MCU Reset
+```
+
+体积继续膨胀（标准库版 3124B → HAL 版 4462B）：`HAL_Delay/Toggle/Read/Write` 一套库函数比标准库的更重。
+
+## 验收
+
+| 操作 | 预期 | 实测 |
+|---|---|---|
+| 按一下 KEY1 | 绿灯 1 秒周期闪烁 | ✅ 用户确认（2026-10-05） |
+| 再按一下 | 灯灭、停止 | ✅ 用户确认（2026-10-05） |
+| 再按 | 恢复闪烁 | ✅ 用户确认（2026-10-05） |
+
+## 三腿对照表更新（按键版）
+
+| 动作 | 标准库 | HAL | 寄存器（预告） |
+|---|---|---|---|
+| PB7 上拉输入 | `GPIO_Mode_IPU`（上拉藏在 ODR） | `Mode=INPUT` + `Pull=GPIO_PULLUP`（显式） | `CRL[31:28]=0b1000` + `ODR\|=1<<7` |
+| 读按键 | `GPIO_ReadInputDataBit` | `HAL_GPIO_ReadPin` | `GPIOB->IDR & (1<<7)` |
+| 翻转 LED | 读-反-写三行 | **`HAL_GPIO_TogglePin` 一行** | `GPIOC->ODR ^= 1<<13` |
+| 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
+
+# 任务四 · 蜂鸣器和继电器
 
 ### 硬件事实
 
 与标准库章完全一致（PC15 蜂鸣器高响 / PC14 继电器**低吸合实测** / PC13 心跳灯），此处不重复——**硬件事实三腿只有一份**。PC14/15 备份域引脚注意事项同前。
 
-### 步骤 20 · HAL 写法：三脚一次配 + 有效电平宏
+### HAL 写法：三脚一次配 + 有效电平宏
 
 ```c
 GPIO_InitStruct.Pin   = GPIO_PIN_13 | GPIO_PIN_14 | GPIO_PIN_15;
@@ -534,7 +534,7 @@ HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);          /* 三格半字节一次写好 
 
 和标准库的差异只有函数名：`GPIO_WriteBit` ↔ `HAL_GPIO_WritePin`，`Bit_RESET` ↔ `GPIO_PIN_RESET`——**同一颗芯片、同一个 CRH 格子**。
 
-### 步骤 21 · 新知识点：HAL_UART_Receive 的"超时轮询"
+### 新知识点：HAL_UART_Receive 的"超时轮询"
 
 04 章回显用的是 `HAL_MAX_DELAY`（收不到就死等）。本章主循环还要扫按键，死等会卡住按键——改成 **10ms 超时轮询**：
 
@@ -546,7 +546,7 @@ if (HAL_UART_Receive(&huart1, &b, 1, 10) == HAL_OK)   /* 最多等 10ms */
 
 > ⚠️ 函数式宏（`BUZZ_ON()`）**不能放进三目运算符**取用：`(cond ? BUZZ_ON : BUZZ_OFF)()` 预处理后变成 `(cond ? 函数调用表达式 : 函数调用表达式)()`——对一个 void 表达式再取函数调用，编译必错（本章实测 8 errors）。老老实实 `if/else`。
 
-### 步骤 22 · 编译烧录验证（实测）
+### 编译烧录验证（实测）
 
 ```
 Program Size: Code=4048 RO-data=312 RW-data=24 ZI-data=1096 → 0 Error(s), 0 Warning(s)
@@ -560,7 +560,46 @@ Download verified successfully（cd 后相对路径烧 .axf）
 | SWD 读 GPIOC_ODR | 0x0000A000（PC15=1 蜂鸣器得电、PC14=0 低吸合） | ✅ 与标准库版**逐位一致** |
 | 按 KEY1/KEY2 | 与串口命令同路径 | ✅ 用户实测（2026-10-06）：KEY1 蜂鸣器有效，继电器"咚"声确认 |
 
-# 任务六 · 串口打印烟雾数据（07 章，光敏替身，HAL 版）✅ 已上板 2026-10-06
+# 任务五 · 温湿度（DHT11）
+
+## 接线
+
+| DHT11 引脚 | 接到 | 说明 |
+|---|---|---|
+| VCC | 3V3 | 供电 |
+| DAT | **J1 的 B14** | 数据线（单总线）；B15 孔磨损已弃用 |
+| GND | GND | 共地 |
+
+## 代码要点（完整代码在 `Src/chapters/ch5_6_dht11_light_hal.c`）
+
+```c
+/* 1. 起始：拉低 20ms 再释放 */
+GPIO_InitTypeDef g = {0};
+g.Pin=GPIO_PIN_14; g.Mode=GPIO_MODE_OUTPUT_PP; HAL_GPIO_Init(GPIOB,&g);
+HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_RESET);
+delay_ms(20);
+g.Mode=GPIO_MODE_INPUT; g.Pull=GPIO_PULLUP;                 /* 释放（上拉） */
+HAL_GPIO_Init(GPIOB,&g);
+
+/* 2. 等三个应答阶段：低 → 高 → 低（★第三步漏掉会错位一位） */
+/* 3. 40 位数据：每位 50us 低起头，40us 处采样：高=1 低=0 */
+/* 4. 校验：前 4 字节之和的低 8 位 == 第 5 字节 */
+```
+
+## 编译烧录
+
+Keil 打开 `Project.uvprojx` → 编译（0 错 0 警）→ 烧 `.axf`。
+
+## 你会看到
+
+串口打印 `HUMI=37.0%  TEMP=31.0C`（每 2 秒一行）；屏幕 `HUMI:/TEMP:` 行同步显示。
+
+## 记住两个坑
+
+1. **漏掉"等应答高电平结束"** → 整个数据错位一位、校验"失败"（真凶不是传感器！）；
+2. **读失败后模块会卡死**（拉着数据线不放）→ **把 DHT11 的 VCC 拔插一次**即可恢复。
+
+# 任务六 · 烟雾数据（光敏模块顶替）
 
 > ⚠️ 脚位修正：光敏 DO = **PB12**（初版误写 PB13，那是烟雾座 H7 的线网；2026-10-06 实测定案，代码已同步改 GPIO_PIN_12）。
 
@@ -636,3 +675,32 @@ Program Size: Code=3844 → 0 Error(s), 0 Warning(s)；烧 .axf verified
 ```
 STM32_Programmer_CLI -c port=SWD mode=HotPlug -r8 0x20004000 6
 ```
+# 任务七 · OLED 显示
+
+## 接线
+
+| OLED 引脚 | 接到 |
+|---|---|
+| VCC | 3V3 |
+| GND | GND |
+| SCL | **B8** |
+| SDA | **B9** |
+
+## 代码要点（HAL 写法，完整代码同 `ch5_6_dht11_light_hal.c`）
+
+HAL 没有"软件 I2C"外设函数，用 HAL_GPIO_Init/WritePin 手动翻转电平：
+
+```c
+static void sda_lo(void){ GPIO_InitTypeDef g={0};              /* 拉低 = 推挽输出0 */
+  g.Pin=GPIO_PIN_9; g.Mode=GPIO_MODE_OUTPUT_PP; HAL_GPIO_Init(GPIOB,&g);
+  HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,GPIO_PIN_RESET); }
+static void sda_rel(void){ GPIO_InitTypeDef g={0};             /* 释放 = 上拉输入 */
+  g.Pin=GPIO_PIN_9; g.Mode=GPIO_MODE_INPUT; g.Pull=GPIO_PULLUP; HAL_GPIO_Init(GPIOB,&g); }
+```
+
+屏幕显示四行：`F103 SMART ENV / LIGHT: OK|DARK / HUMI: xx.x% / TEMP: xx.xC`，与串口打印一致。
+
+## 你会看到
+
+上电约 10 秒清屏画字，之后挡光敏 `LIGHT` 行实时变 `DARK`，温湿度每 2 秒刷新。
+
