@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    Templates/Src/main.c
   * @brief   07 ch: light sensor DO read + UART print (HAL version)
-  * @note    DO = PB13 (floating input), prints on change, '?' = query,
+  * @note    DO = PB12 (floating input), prints on change, '?' = query,
   *          HAL_UART_Receive 10ms timeout polling keeps loop non-blocking.
   ******************************************************************************
   */
@@ -37,7 +37,7 @@ int main(void)
   __HAL_RCC_USART1_CLK_ENABLE();
 
   /* PB13 = DO: floating input (module comparator is push-pull) */
-  GPIO_InitStruct.Pin  = GPIO_PIN_13;
+  GPIO_InitStruct.Pin  = GPIO_PIN_12;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -76,7 +76,7 @@ int main(void)
 
   while (1)
   {
-    uint8_t now = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_13) == GPIO_PIN_RESET) ? 0 : 1;
+    uint8_t now = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12) == GPIO_PIN_RESET) ? 0 : 1;
     uint8_t b;
 
     if (now != last)
