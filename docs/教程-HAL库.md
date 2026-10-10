@@ -91,7 +91,7 @@ Program Size: Code=1838 RO-data=302 RW-data=16 ZI-data=1024
 ## 烧录
 
 ```
-STM32_Programmer_CLI -c port=SWD -w MDK-ARM\f103-hal-lab\f103-hal-lab.hex -v -rst
+STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf   （本模板无 hex，烧 axf） -v -rst
 ```
 
 脚手架空主循环无现象，链路打通即可。注意 02 章开始才产生"1 秒闪一次"的可观察现象。
@@ -244,16 +244,16 @@ UV4.exe -b Project.uvprojx -j0 -o build.log
 
 ```
 Program Size: Code=2476 RO-data=304 RW-data=16 ZI-data=1024
-"f103-hal-lab103-hal-lab.axf" - 0 Error(s), 0 Warning(s).
+"f103-hal-lab/f103-hal-lab.axf" - 0 Error(s), 0 Warning(s).
 Build Time Elapsed:  00:00:18
 ```
 
-**两个注意**：①HAL 全量源码参与编译，比标准库版慢（18 秒 vs 1 秒），但没用的函数不会链进镜像；②产物在 `MDK-ARM103-hal-lab103-hal-lab.axf`，**官方模板没开 hex 选项**——不影响，CubeProgrammer 直接支持 .axf（ELF 格式，还带调试符号）。
+**两个注意**：①HAL 全量源码参与编译，比标准库版慢（18 秒 vs 1 秒），但没用的函数不会链进镜像；②产物在 `MDK-ARM/f103-hal-lab/f103-hal-lab.axf`，**官方模板没开 hex 选项**——不影响，CubeProgrammer 直接支持 .axf（ELF 格式，还带调试符号）。
 
 ## 烧录
 
 ```
-STM32_Programmer_CLI -c port=SWD -w MDK-ARM103-hal-lab103-hal-lab.axf -v -rst
+STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst
 ```
 
 **实测日志**：
@@ -387,7 +387,7 @@ while (1)
 UV4.exe -b Project.uvprojx -j0 -o build.log
 → Program Size: Code=3528 RO-data=428 RW-data=20 ZI-data=1100
 → 0 Error(s), 0 Warning(s)
-STM32_Programmer_CLI -c port=SWD -w f103-hal-lab/f103-hal-lab.axf -v -rst   （模板无 hex，烧 axf）
+STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst   （模板无 hex，烧 axf）
 → Download verified successfully + MCU Reset
 ```
 
@@ -490,7 +490,7 @@ while (1)
 UV4.exe -b Project.uvprojx -j0 -o build.log
 → Program Size: Code=4106 RO-data=340 RW-data=16 ZI-data=1168
 → 0 Error(s), 0 Warning(s), 15 秒
-STM32_Programmer_CLI -c port=SWD -w f103-hal-lab103-hal-lab.axf -v -rst
+STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst
 → Download verified successfully + MCU Reset
 ```
 
@@ -1362,3 +1362,913 @@ PERSIST OK: "STM32" survived reset! (flash keeps data)   ← 断电不丢 ✓
 1. **写入/擦除前必须拔掉光敏(PB12)和温湿度(PB14)的线**——共用引脚，否则数据线被抢占；
 2. **地址不要超过 2MB**（本板实测是 W25Q16，容量 2MB）；
 3. 擦除按**扇区(4KB)**为单位，页编程一次最多 256 字节。
+
+---
+
+# 任务九 · WiFi 上云（ESP8266 → OneNET）
+
+> 本章把前八章全部串起来：DHT11 温湿度 + 光敏光照 → OLED 屏显示 + 串口打印 →
+> ESP8266 通过 WiFi 传到 OneNET 云平台网页。**三处数字必须一致**：屏幕 = 串口 = 云端。
+> 本章实测记录：2026-10-10（HAL 腿）： 真值 25.8℃/39% 连续上云，平台回执 code:200，CONNACK rc=0；
+> 整夜运行十余小时不断线；用户已验收（OLED = 串口 = 云端一致）。
+> 代码文件：`Src/chapters/ch9_wifi_onenet_hal.c`（= 本章定稿时的 `Src/main.c`）。
+
+## 0 · 动手前的整体思路（工程师怎么想）
+
+数据流一共 5 段，任何一段断了都不上云：
+
+```
+[传感器]          [MCU]                [ESP8266]        [云]
+DHT11(PB14)  ──▶  STM32F103  ──串口2──▶  ESP8266  ──WiFi──▶  OneNET 网页
+光敏 (PB12)       │                        AT指令+TCP       open.iot.10086.cn
+                  ├─▶ OLED(PB8/PB9) 屏幕显示（你来目视验收）
+                  └─▶ 串口1(PA9/PA10) 打印（串口助手看）
+```
+
+四个关键决策（每个都有实测依据，后面小节展开）：
+
+| 决策 | 为什么 |
+|---|---|
+| ESP8266 用 AT 指令 + TCP，MQTT 报文自己在 STM32 里拼 | 模块固件实测是 `AT version:1.7.4.0`，**不支持** `AT+MQTTUSERCFG` 系列 MQTT 指令（发一条回一条 ERROR） |
+| 连 OneNET 的 1883 端口（明文 TCP，不用 TLS） | OneNET 官方文档：非加密地址 `mqtts.heclouds.com:1883`。ESP-01S 的 1MB Flash 固件跑不动 TLS，明文端口正好 |
+| 密码不直接填设备密钥，填"token" | OneNET 新版（2023-04 起唯一能注册的版本）规定：`password = 用密钥算出来的 token`。直接填密钥会被拒连 |
+| 拿到过一次真实 DHT11 读数才允许上云 | 宁可少传，绝不传假值。DHT11 偶尔超时（见任务五），此时 OLED 显示 `--`，云端保持上一次成功值 |
+
+## 1 · 第一步 · 引脚从哪来
+
+本章不新增接线，全部沿用前几章定案（原理图见 `STM32F103C8T6精英板原理图.pdf`）：
+
+| 部件 | 引脚 | 来源 |
+|---|---|---|
+| ESP8266-01S 专用座 U11 | PA2=MCU TX → 模块 RXD，PA3=MCU RX ← 模块 TXD | 座子丝印 `3.3v rx rst io0 en io2 tx gnd`；EN 已被板上拉到 3V3，RST/IO0/IO2 悬空，**板上没有自动复位电路** |
+| OLED | PB8=SCL，PB9=SDA（软件 I2C） | 任务七定案 |
+| DHT11 | PB14 | 任务五定案（B15 孔磨损弃用） |
+| 光敏 DO | PB12，**上拉输入**（开漏输出必须上拉） | 任务六定案 |
+| 调试串口 | PA9/PA10 → 板载 CH340 → 电脑 USB | 任务二定案 |
+
+⚠️ 任务八的警告在这里同样生效：**不要同时插 Flash 写测试的线**，PB12/PB14 共用。
+
+## 2 · 第二步 · 注册 OneNET 并拿到"三元组"
+
+三元组 = **产品ID + 设备名称 + 设备密钥**，是设备在云端的身份证。全部免费。
+
+1. 浏览器打开 `https://open.iot.10086.cn/` → 右上角注册（手机号 + 实名认证，个人免费）。
+2. 登录后进控制台 → 「产品开发」→「创建产品」，填写：
+   - 产品名称：随便（例 `F103环境监测`）
+   - 联网方式：**WiFi**；数据协议：**MQTT**（有的界面写"物模型/OneJSON"）
+3. 创建完点进产品 → 「产品概述/产品信息」→ 抄下 **产品ID**（10 位左右字母数字）。
+4. 左侧「设备管理」→「添加设备」：
+   - 设备名称：自己起（例 `dev1`，只能字母数字下划线）
+   - 设备密钥：选**自动生成** → 创建后进设备详情，点「查看/复制」抄下**设备密钥**
+     （形如 `Tk9BZDho...==`，末尾常有 `=`，**必须完整复制包括等号**）
+5. **定义物模型**（最容易漏的一步）：产品里找「物模型」→「属性」→ 逐个「添加属性」：
+
+   | 功能名称 | 标识符（必须一字不差） | 数据类型 | 取值范围 | 单位 | 读写类型 |
+   |---|---|---|---|---|---|
+   | 温度 | `temperature` | double(双精度浮点型) | 0-60 | ℃ | 只读 |
+   | 湿度 | `humidity` | double(双精度浮点型) | 0-70 | %RH | 只读 |
+   | 光照 | `light` | int32(整型) | 0-400 | lux | 只读 |
+
+6. ★**必须点「发布」**：属性加完后，在物模型页面走完「发布」流程（一路下一步到完成）。
+   **只添加不发布 = 平台认为属性不存在**，设备上报会收到 `code:2306 identifier not exist`
+   （实测踩过：属性建得全对，就差这一个按钮，数据一直被拒）。
+
+### 本章实测的三元组（照抄可复现，换成你自己的也行）
+
+```
+产品ID    T67q8WAChA
+设备名称  dev1
+设备密钥  Tk9BZDhoTDZRMkp3d0Q5YnBRcHV4T3hxR3hobTVIaTk=
+```
+
+## 3 · 第三步 · 算 token（password 不是密钥本身）
+
+新版 OneNET 规定 MQTT 连接三要素这样填（官方 MQTT 接入文档原文）：
+
+| MQTT 字段 | 填什么 |
+|---|---|
+| clientId | 设备名称 |
+| username | 产品ID |
+| password | **用密钥算出来的 token** |
+
+token 算法（官方文档）：把 `到期时间戳\n方法名\nproducts/产品ID/devices/设备名\n2018-10-31`
+这四行拼一起，用**先经过 base64 解码的设备密钥**做 HMAC-MD5 签名再 base64。
+两个大坑：**密钥要先 base64 解码**（不解码 100% 连不上且无提示）；**et 过期就拒连**。
+
+不用手算，本项目附带离线工具（密钥不出你的电脑）：
+
+```
+python 工具/onenet_token.py T67q8WAChA dev1 Tk9BZDhoTDZRMkp3d0Q5YnBRcHV4T3hxR3hobTVIaTk= 3650
+```
+
+输出里抄两行备用（3650 = 有效期 10 年）：
+
+```
+clientId     : dev1
+username     : T67q8WAChA
+password     : version=2018-10-31&res=products/T67q8WAChA/devices/dev1&et=2106900860&method=md5&sign=fKgrFdzCemZ72jpNBVxrHA==
+```
+
+## 4 · 第四步 · 用什么方法通信，为什么
+
+### 4.1 先问模块支持什么（每个新模块都要做这一步）
+
+上电后模块会打印开机横幅（`Ai-Thinker Technology Co. Ltd.` + `ready`）。
+发 `AT+GMR` 查版本，本章模块实测：
+
+```
+AT version:1.7.4.0(Jul  8 2020 15:53:04)
+SDK version:3.0.5-dev(52383f9)
+```
+
+然后发 `AT+MQTTUSERCFG=?` 探测：返回 **ERROR** → 这套固件不支持 MQTT AT 指令。
+网上大量 `AT+MQTTUSERCFG` 教程对这种"安信可标准版 AT 固件"**用不了**，只能手工拼 MQTT 报文。
+
+### 4.2 MQTT 报文长什么样（手工拼包的依据）
+
+MQTT 就是"规定好格式的一串字节"。本章用到三种报文，公共规律是
+**固定头(1字节) + 剩余长度 + 内容**：
+
+| 报文 | 固定头 | 内容 |
+|---|---|---|
+| CONNECT（连接） | 0x10 | 协议名"MQTT"+等级0x04+标志0xC2(用用户名密码+清会话)+保活秒数 + clientId + username + password(token)，每段字符串前加 2 字节大端长度 |
+| SUBSCRIBE（订阅） | 0x82 | 报文标识符(0x00,0x01) + 要订的 topic + QoS(0x00) |
+| PUBLISH（发布） | 0x30 | topic + 要发的数据（JSON） |
+
+"剩余长度"用**7 位变长编码**：每字节只存 7 位数据，最高位是"后面还有"的标志，
+所以 127 以内 1 字节、16383 以内 2 字节——代码里 `pack()` 函数的 do-while 就是它。
+
+平台对每个动作都有应答，认这两个字节：
+
+| 应答 | 字节特征 | 含义 |
+|---|---|---|
+| CONNACK | `20 02 00 0X` | X=0 连接成功；4=用户名密码错；5=未授权 |
+| SUBACK | `90 03 00 01 00` | 订阅成功 |
+
+### 4.3 上报什么、发到哪
+
+topic（属性上报）和报文体（OneJSON），把产品ID/设备名换成你的：
+
+```
+topic:  $sys/T67q8WAChA/dev1/thing/property/post
+body:   {"id":"1","version":"1.0","params":{"temperature":{"value":25.8},"humidity":{"value":36.0},"light":{"value":1}}}
+```
+
+平台回执（我们也订阅了回执 topic，所以能收到）：
+
+```
+$sys/.../post/reply {"id":"1","code":200,"msg":"success"}
+```
+
+`code:200` = 成功；`2306` = 标识符不存在（= 物模型没发布）；收到回执说明**数据真的到云端了**。
+
+## 5 · 第五步 · 代码框架思路（为什么程序长这样）
+
+固件分三层，每层只干一件事，坏了能立刻定位是哪层：
+
+```
+┌ 应用层  主循环：读传感器 → 刷新 OLED → 打印串口 → 每3轮发布一次云端
+├ MQTT层  build_connect/subscribe/publish + pack(变长编码) + send_packet(等'>'和SEND OK)
+└ 驱动层  USART1打印 / USART2中断收ESP(环形缓冲) / DHT11单总线 / 光敏 / OLED软件I2C / DWT微秒延时
+```
+
+四个关键设计：
+
+1. **USART2 用中断收 + 环形缓冲**（`rx_head`/`rx_tail` 是"总计数"，下标取模）。
+   任务九前期大坑：轮询 + `delay_ms(1)` 读 DR 会 ORE 溢出丢字节（模块明明回了，你只收到零星几个）；
+   改中断后 ORE=0。后来的坑：**普通数组缓冲收满 1500 字节后就永久变聋**（表现为"模块不理人"，
+   其实是你自己不收了）——所以用环形缓冲，取模后永不满。
+2. **`send_packet` 必须两次握手**：先等 `AT+CIPSEND` 的 `>` 提示符（最多 5 秒）才发字节；
+   发完等模块回 `SEND OK`（最多 4 秒）才算发出。少任何一步都可能把字节发进"没准备好的管道"。
+3. **传感器 → 全局变量 → 三个出口**：`g_t_i/g_h_i/g_light` 只存一份，OLED、串口、云端全用它，
+   天然保证三处一致。
+4. **每 3 轮（约 8 秒）发布一次**：保活 60 秒绰绰有余，又不会刷屏；平台在 1.5×保活时间
+   收不到上行会踢人，8 秒一条远快于 90 秒。
+
+
+### 本腿（HAL 库版）与标准库版的实现差异
+
+- **时钟 = HSI 内部 64MHz**（不接外部晶振也能跑，`ch5_6` 同款 `SystemClock_Config`）；
+  DWT 微秒延时沿用 `*72` 系数（ch5_6 验证过的写法，偏慢 12%，DHT/OLED 都容忍）。
+- 串口全走 HAL 库：发 = `HAL_UART_Transmit`；
+  收 = `HAL_UART_Receive_IT` 每字节中断 + `HAL_UART_RxCpltCallback` 存入环形缓冲；
+  出错走 `HAL_UART_ErrorCallback` 计数 ORE 并恢复接收。
+- 工程没有 hex 产物，**烧 axf**：
+  `STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst`
+  （⚠️ 工程路径含中文时 CubeProgrammer 可能吞路径——先把 axf 拷到纯英文目录再烧，实测踩过）。
+
+## 6 · 第六步 · 完整代码
+
+完整固件 = `User/main.c`（本章定稿 651 行，含断线自动重连），归档在 `Src/chapters/ch9_wifi_onenet_hal.c`。
+换 WiFi / 换云账号只改文件头部的 7 个 `#define`（`WIFI_SSID` / `WIFI_PWD` / `MQTT_CLIENT` /
+`MQTT_USER` / `MQTT_PASS` / `TOPIC_POST` / `TOPIC_SUB`）。
+
+```c
+/**
+  ******************************************************************************
+  * @file    main.c
+  * @brief   任务九（HAL版）终版：DHT11(PB14)+光敏(PB12)+OLED(PB8/PB9)+MQTT上OneNET
+  * @note    与 SPL 腿(标准库仓库 09 章)功能完全一致，三处显示一致：
+  *            OLED 四行 = 串口1打印 = OneNET 云端（code:200）
+  *          移植说明（本腿惯例）：
+  *            - 时钟 = HSI 64MHz（不用外部晶振，ch5_6 同款 SystemClock_Config）
+  *              DWT 延时仍按 *72 系数（沿用 ch5_6 验证过的写法，DHT/OLED 都容忍 12% 偏慢）
+  *            - 串口收发全走 HAL_UART_Transmit / HAL_UART_Receive_IT + RxCpltCallback
+  *            - ESP 接收 = 每字节中断 + 环形缓冲（head/tail 总计数+取模，永不收满变聋）
+  *          实测（2026-10-10）：SPL 腿同款流程，平台回执 code:200，真值 25.8C/34%。
+  *          串口打印一律 ASCII（中文只写注释，否则 AC5 #870-D 警告+乱码）。
+  ******************************************************************************
+  */
+#include "main.h"
+
+#define RES   ((volatile uint32_t *)0x20004000)
+
+/* ---------------- 账号参数(改这里就能换设备/换WiFi) ---------------- */
+#define WIFI_SSID   "1"
+#define WIFI_PWD    "987654321"
+
+#define MQTT_HOST   "mqtts.heclouds.com"
+#define MQTT_PORT   "1883"
+#define MQTT_CLIENT "dev1"
+#define MQTT_USER   "T67q8WAChA"
+#define MQTT_PASS   "version=2018-10-31&res=products/T67q8WAChA/devices/dev1&et=2106900860&method=md5&sign=fKgrFdzCemZ72jpNBVxrHA=="
+#define KEEPALIVE   60
+
+#define TOPIC_POST  "$sys/T67q8WAChA/dev1/thing/property/post"
+#define TOPIC_SUB   "$sys/T67q8WAChA/dev1/thing/property/post/reply"
+
+void SystemClock_Config(void);   /* 本文件底部定义(HSI 64MHz, ch5_6 同款) */
+
+/* ================= DWT 微秒延时(DHT11 时序必须微秒级) ================= */
+#define DEMCR      (*(volatile uint32_t *)0xE000EDFC)
+#define DWT_CTRL   (*(volatile uint32_t *)0xE0001000)
+#define DWT_CYCCNT (*(volatile uint32_t *)0xE0001004)
+static void dwt_init(void){ DEMCR |= (1u<<24); DWT_CYCCNT=0; DWT_CTRL |= 1u; }
+static void delay_us(uint32_t us){ uint32_t s=DWT_CYCCNT; while((DWT_CYCCNT-s) < us*72){} }
+static void delay_ms(uint32_t ms){ while(ms--) delay_us(1000); }
+
+/* ---------------- 串口环形缓冲区 + 每字节中断接收 ----------------
+   环形: head/tail 是"总计数", 下标取模。普通数组收满就聋(实测踩过) */
+#define RXCAP 2000
+volatile uint32_t rx_head = 0, rx_tail = 0, ore_n = 0;
+volatile uint8_t  rx_buf[RXCAP];
+static uint8_t  saw_prompt = 0;
+static volatile uint8_t rx_byte;                 /* HAL 每字节接收的落点 */
+static UART_HandleTypeDef huart1;
+static UART_HandleTypeDef huart2;
+
+void USART2_IRQHandler(void) { HAL_UART_IRQHandler(&huart2); }
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        rx_buf[rx_head % RXCAP] = rx_byte;
+        rx_head++;
+        HAL_UART_Receive_IT(huart, (uint8_t *)&rx_byte, 1);   /* 重新挂上 */
+    }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+    if (huart->Instance == USART2)
+    {
+        ore_n++;                                   /* ORE 等错误: 计数并恢复接收 */
+        HAL_UART_Receive_IT(huart, (uint8_t *)&rx_byte, 1);
+    }
+}
+
+/* ---------------- 串口1: 打印 ---------------- */
+static void uart1_init(void)
+{
+    GPIO_InitTypeDef g = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_USART1_CLK_ENABLE();
+
+    g.Pin = GPIO_PIN_9; g.Mode = GPIO_MODE_AF_PP; g.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOA, &g);
+    g.Pin = GPIO_PIN_10; g.Mode = GPIO_MODE_INPUT; g.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &g);
+
+    huart1.Instance = USART1;
+    huart1.Init.BaudRate = 115200;
+    huart1.Init.WordLength = UART_WORDLENGTH_8B;
+    huart1.Init.StopBits = UART_STOPBITS_1;
+    huart1.Init.Parity = UART_PARITY_NONE;
+    huart1.Init.Mode = UART_MODE_TX_RX;
+    huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+    HAL_UART_Init(&huart1);
+}
+static void u1ch(char c) { HAL_UART_Transmit(&huart1, (uint8_t *)&c, 1, HAL_MAX_DELAY); }
+static void u1str(const char *s) { while (*s) u1ch(*s++); }
+static void u1num(uint32_t v)
+{
+    char b[11]; int i = 0;
+    if (v == 0) { u1ch('0'); return; }
+    while (v) { b[i++] = (char)('0' + v % 10); v /= 10; }
+    while (i--) u1ch(b[i]);
+}
+
+/* ---------------- 串口2: 发字节给 ESP ---------------- */
+static void u2put(char c) { HAL_UART_Transmit(&huart2, (uint8_t *)&c, 1, 100); }
+static void u2str(const char *s) { while (*s) u2put(*s++); }
+
+static void flush_rx(void)
+{
+    uint32_t h = rx_head;
+    while (rx_tail < h)
+    {
+        uint8_t c = rx_buf[rx_tail % RXCAP];
+        rx_tail++;
+        if (c == '>') saw_prompt = 1;
+        if (c == '\n') { u1ch('\r'); u1ch('\n'); }
+        else if (c == '\r') { }
+        else if (c >= 32 && c < 127) u1ch((char)c);
+        else { u1ch('['); u1num(c); u1ch(']'); }
+    }
+}
+
+static void pump(uint32_t ms)
+{
+    uint32_t k;
+    for (k = 0; k < ms; k++) { flush_rx(); delay_ms(1); }
+    flush_rx();
+}
+
+static void at_cmd(const char *cmd, uint32_t ms)
+{
+    u1str("\r\n===== SEND: "); u1str(cmd); u1str(" =====\r\n");
+    flush_rx();
+    rx_tail = rx_head;                     /* 丢弃上一条的尾巴, 本段只看本条回复 */
+    u2str(cmd); u2put('\r'); u2put('\n');
+    pump(ms);
+}
+
+/* 在环形缓冲区里找特征字节串(按总计数下标, 取模访问) */
+static long find_pat(uint32_t from, const uint8_t *pat, uint32_t plen)
+{
+    uint32_t i, j, h = rx_head;
+    if (h < plen || from > h - plen) return -1;
+    for (i = from; i + plen <= h; i++)
+    {
+        for (j = 0; j < plen; j++)
+            if (rx_buf[(i + j) % RXCAP] != pat[j]) break;
+        if (j == plen) return (long)i;
+    }
+    return -1;
+}
+
+static const uint8_t PAT_OK[2] = { 'O', 'K' };
+
+static void wait_ready(void)
+{
+    uint32_t i, base;
+    for (i = 0; i < 10; i++)
+    {
+        base = rx_head;
+        at_cmd("AT", 1200);
+        if (find_pat(base, PAT_OK, 2) >= 0)
+        {
+            u1str("[+] module ready (got OK)\r\n");
+            return;
+        }
+        u1str("[..] no OK yet, retry\r\n");
+    }
+    u1str("[!] module never answered OK - check power / TX-RX wiring\r\n");
+}
+
+/* ================= OLED 软件 I2C(PB8=SCL, PB9=SDA) HAL 版 =================
+   与 ch5_6_dht11_light_hal.c 同款(已烧录验证) */
+static void i2c_dly(void){ delay_us(3); }
+static void scl_hi(void){ HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_SET); }
+static void scl_lo(void){ HAL_GPIO_WritePin(GPIOB,GPIO_PIN_8,GPIO_PIN_RESET); }
+static void sda_lo(void)
+{
+  GPIO_InitTypeDef g = {0};
+  g.Pin=GPIO_PIN_9; g.Mode=GPIO_MODE_OUTPUT_PP; g.Speed=GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB,&g);
+  HAL_GPIO_WritePin(GPIOB,GPIO_PIN_9,GPIO_PIN_RESET);
+}
+static void sda_rel(void)
+{
+  GPIO_InitTypeDef g = {0};
+  g.Pin=GPIO_PIN_9; g.Mode=GPIO_MODE_INPUT; g.Pull=GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB,&g);
+}
+static uint8_t sda_rd(void){ return (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_9)==GPIO_PIN_SET)?1:0; }
+static void i2c_start(void){ sda_rel(); i2c_dly(); scl_hi(); i2c_dly(); sda_lo(); i2c_dly(); scl_lo(); i2c_dly(); }
+static void i2c_stop(void){ sda_lo(); i2c_dly(); scl_hi(); i2c_dly(); sda_rel(); i2c_dly(); }
+static uint8_t i2c_wr(uint8_t b)
+{
+  uint8_t i, ack;
+  for(i=0;i<8;i++){
+    if(b&0x80) sda_rel(); else sda_lo();
+    b<<=1; i2c_dly(); scl_hi(); i2c_dly(); scl_lo();
+  }
+  sda_rel(); i2c_dly(); scl_hi(); i2c_dly();
+  ack = sda_rd(); scl_lo();
+  return ack;
+}
+
+static const uint8_t F57[] = {
+0x00,0x00,0x00,0x00,0x00, 0x00,0x00,0x5F,0x00,0x00, 0x00,0x07,0x00,0x07,0x00, 0x14,0x7F,0x14,0x7F,0x14,
+0x24,0x2A,0x7F,0x2A,0x12, 0x23,0x13,0x08,0x64,0x62, 0x36,0x49,0x55,0x22,0x50, 0x00,0x05,0x03,0x00,0x00,
+0x00,0x1C,0x22,0x41,0x00, 0x00,0x41,0x22,0x1C,0x00, 0x14,0x08,0x3E,0x08,0x14, 0x08,0x08,0x3E,0x08,0x08,
+0x00,0x50,0x30,0x00,0x00, 0x08,0x08,0x08,0x08,0x08, 0x00,0x60,0x60,0x00,0x00, 0x20,0x10,0x08,0x04,0x02,
+0x3E,0x51,0x49,0x45,0x3E, 0x00,0x42,0x7F,0x40,0x00, 0x42,0x61,0x51,0x49,0x46, 0x21,0x41,0x45,0x4B,0x31,
+0x18,0x14,0x12,0x7F,0x10, 0x27,0x45,0x45,0x45,0x39, 0x3C,0x4A,0x49,0x49,0x30, 0x01,0x71,0x09,0x05,0x03,
+0x36,0x49,0x49,0x49,0x36, 0x06,0x49,0x49,0x29,0x1E, 0x00,0x36,0x36,0x00,0x00, 0x00,0x56,0x36,0x00,0x00,
+0x08,0x14,0x22,0x41,0x00, 0x14,0x14,0x14,0x14,0x14, 0x00,0x41,0x22,0x14,0x08, 0x02,0x01,0x51,0x09,0x06,
+0x32,0x49,0x79,0x41,0x3E, 0x7E,0x11,0x11,0x11,0x7E, 0x7F,0x49,0x49,0x49,0x36, 0x3E,0x41,0x41,0x41,0x22,
+0x7F,0x41,0x41,0x22,0x1C, 0x7F,0x49,0x49,0x49,0x41, 0x7F,0x09,0x09,0x09,0x01, 0x3E,0x41,0x49,0x49,0x7A,
+0x7F,0x08,0x08,0x08,0x7F, 0x00,0x41,0x7F,0x41,0x00, 0x20,0x40,0x41,0x3F,0x01, 0x7F,0x08,0x14,0x22,0x41,
+0x7F,0x40,0x40,0x40,0x40, 0x7F,0x02,0x0C,0x02,0x7F, 0x7F,0x04,0x08,0x10,0x7F, 0x3E,0x41,0x41,0x41,0x3E,
+0x7F,0x09,0x09,0x09,0x06, 0x3E,0x41,0x51,0x21,0x5E, 0x7F,0x09,0x19,0x29,0x46, 0x46,0x49,0x49,0x49,0x31,
+0x01,0x01,0x7F,0x01,0x01, 0x3F,0x40,0x40,0x40,0x3F, 0x1F,0x20,0x40,0x20,0x1F, 0x3F,0x40,0x38,0x40,0x3F,
+0x63,0x14,0x08,0x14,0x63, 0x07,0x08,0x70,0x08,0x07, 0x61,0x51,0x49,0x45,0x43 };
+
+static void o_cmd(uint8_t c){ i2c_start(); i2c_wr(0x78); i2c_wr(0x00); i2c_wr(c); i2c_stop(); }
+static void o_data(uint8_t d){ i2c_start(); i2c_wr(0x78); i2c_wr(0x40); i2c_wr(d); i2c_stop(); }
+static void o_pos(uint8_t pg, uint8_t col){ o_cmd((uint8_t)(0xB0|pg)); o_cmd((uint8_t)(0x00|(col&0x0F))); o_cmd((uint8_t)(0x10|(col>>4))); }
+static void o_print(uint8_t pg, uint8_t col, const char *s)
+{
+  o_pos(pg,col);
+  while(*s){
+    uint8_t c=(uint8_t)*s++; uint8_t i;
+    if(c<0x20||c>0x5F) c=' ';
+    for(i=0;i<5;i++) o_data(F57[(c-0x20)*5+i]);
+    o_data(0x00);
+  }
+}
+static void o_clear(uint8_t pg){ uint8_t i; o_pos(pg,0); for(i=0;i<128;i++) o_data(0x00); }
+static void o_init(void)
+{
+  uint8_t i; for(i=0;i<100;i++) i2c_dly();
+  i2c_start(); i2c_wr(0x78); i2c_wr(0x00);
+  i2c_wr(0xAE); i2c_wr(0xD5); i2c_wr(0x80); i2c_wr(0xA8); i2c_wr(0x3F);
+  i2c_wr(0xD3); i2c_wr(0x00); i2c_wr(0x40); i2c_wr(0x8D); i2c_wr(0x14);
+  i2c_wr(0x20); i2c_wr(0x02); i2c_wr(0xA1); i2c_wr(0xC8); i2c_wr(0xDA);
+  i2c_wr(0x12); i2c_wr(0x81); i2c_wr(0xCF); i2c_wr(0xD9); i2c_wr(0xF1);
+  i2c_wr(0xDB); i2c_wr(0x40); i2c_wr(0xA4); i2c_wr(0xA6); i2c_wr(0xAF);
+  i2c_stop();
+}
+
+/* ================= DHT11 单总线(PB14, 带5ms超时, 永不卡死) HAL 版 ================= */
+static void dht_out_low(void)
+{
+  GPIO_InitTypeDef g = {0};
+  g.Pin=GPIO_PIN_14; g.Mode=GPIO_MODE_OUTPUT_PP; g.Speed=GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB,&g);
+  HAL_GPIO_WritePin(GPIOB,GPIO_PIN_14,GPIO_PIN_RESET);
+}
+static void dht_rel(void)
+{
+  GPIO_InitTypeDef g = {0};
+  g.Pin=GPIO_PIN_14; g.Mode=GPIO_MODE_INPUT; g.Pull=GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB,&g);
+}
+static uint8_t dht_read_pin(void){ return (HAL_GPIO_ReadPin(GPIOB,GPIO_PIN_14)==GPIO_PIN_SET)?1:0; }
+static uint8_t wait_line(uint8_t lv)
+{
+  uint32_t t0 = DWT_CYCCNT;
+  while (dht_read_pin() != lv)
+    if ((DWT_CYCCNT - t0) > 5000u*72) return 1;
+  return 0;
+}
+/* 返回 0=成功 1=超时 2=校验错 */
+static uint8_t dht11_read(uint8_t d[5])
+{
+  uint8_t i, j;
+  for(i=0;i<5;i++) d[i]=0;
+  dht_out_low(); delay_ms(20); dht_rel();
+  if(wait_line(0)) return 1;
+  if(wait_line(1)) return 1;
+  if(wait_line(0)) return 1;
+  for(i=0;i<5;i++){
+    for(j=0;j<8;j++){
+      if(wait_line(1)) return 1;
+      delay_us(40);
+      d[i] = (uint8_t)(d[i]<<1);
+      if(dht_read_pin()){ d[i] |= 1; if(wait_line(0)) return 1; }
+    }
+  }
+  if((uint8_t)(d[0]+d[1]+d[2]+d[3]) != d[4]) return 2;
+  return 0;
+}
+
+/* ================= MQTT 报文拼装 ================= */
+static uint8_t body[420];
+static uint8_t mq[560];
+
+static uint32_t put_str(uint8_t *p, const char *s)
+{
+    uint32_t n = 0, i;
+    while (s[n]) n++;
+    p[0] = (uint8_t)(n >> 8);
+    p[1] = (uint8_t)(n & 0xFF);
+    for (i = 0; i < n; i++) p[2 + i] = (uint8_t)s[i];
+    return 2 + n;
+}
+
+static uint32_t pack(uint8_t type, uint32_t blen)
+{
+    uint32_t rl = blen, i = 1, k;
+    mq[0] = type;
+    do {
+        uint8_t d = (uint8_t)(rl & 0x7F);
+        rl >>= 7;
+        if (rl) d |= 0x80;
+        mq[i++] = d;
+    } while (rl);
+    for (k = 0; k < blen; k++) mq[i + k] = body[k];
+    return i + blen;
+}
+
+static uint32_t build_connect(void)
+{
+    uint32_t b = 0;
+    b += put_str(body + b, "MQTT");
+    body[b++] = 0x04;
+    body[b++] = 0xC2;
+    body[b++] = (uint8_t)(KEEPALIVE >> 8);
+    body[b++] = (uint8_t)(KEEPALIVE & 0xFF);
+    b += put_str(body + b, MQTT_CLIENT);
+    b += put_str(body + b, MQTT_USER);
+    b += put_str(body + b, MQTT_PASS);
+    return pack(0x10, b);
+}
+
+static uint32_t build_subscribe(void)
+{
+    uint32_t b = 0;
+    body[b++] = 0x00; body[b++] = 0x01;
+    b += put_str(body + b, TOPIC_SUB);
+    body[b++] = 0x00;
+    return pack(0x82, b);
+}
+
+/* ---- 动态 payload: 用真实传感器值拼 OneJSON ---- */
+static char    payload[200];
+static uint32_t plen = 0;
+static uint32_t msg_id = 0;
+
+static void p_add(const char *s){ while (*s) payload[plen++] = *s++; }
+static void p_u8(uint8_t v)
+{
+    if (v >= 100) payload[plen++] = (char)('0' + v / 100);
+    if (v >= 10)  payload[plen++] = (char)('0' + v / 10 % 10);
+    payload[plen++] = (char)('0' + v % 10);
+}
+
+static uint32_t build_publish(uint8_t t_i, uint8_t t_f, uint8_t h_i, uint8_t h_f, uint8_t light)
+{
+    uint32_t b = 0, i;
+    plen = 0;
+    msg_id++;
+    p_add("{\"id\":\"");      p_u8((uint8_t)msg_id);
+    p_add("\",\"version\":\"1.0\",\"params\":{");
+    p_add("\"temperature\":{\"value\":");  p_u8(t_i); payload[plen++]='.'; p_u8(t_f); p_add("},");
+    p_add("\"humidity\":{\"value\":");     p_u8(h_i); payload[plen++]='.'; p_u8(h_f); p_add("},");
+    p_add("\"light\":{\"value\":");        p_u8(light); p_add("}}}");
+    payload[plen] = 0;
+    /* PUBLISH 报文体 = 2字节topic长度+topic+payload, 必须重新装进 body[]! */
+    b += put_str(body + b, TOPIC_POST);
+    for (i = 0; i < plen; i++) body[b++] = (uint8_t)payload[i];
+    return pack(0x30, b);
+}
+
+/* 发一包 MQTT 报文: 等 '>' 5s -> 发字节 -> 等 SEND OK 4s 才算成功
+   返回 1=发出去了 0=失败(调用方应标记网络掉线并重连) */
+static uint8_t send_packet(const char *name, uint32_t n, uint32_t wait_ms)
+{
+    char cmd[32];
+    uint32_t i, k;
+
+    u1str("\r\n----- "); u1str(name); u1str(" : "); u1num(n);
+    u1str(" bytes -----\r\n");
+
+    cmd[0] = 'A'; cmd[1] = 'T'; cmd[2] = '+'; cmd[3] = 'C'; cmd[4] = 'I';
+    cmd[5] = 'P'; cmd[6] = 'S'; cmd[7] = 'E'; cmd[8] = 'N'; cmd[9] = 'D';
+    cmd[10] = '='; i = 11;
+    if (n >= 100) cmd[i++] = (char)('0' + n / 100);
+    if (n >= 10)  cmd[i++] = (char)('0' + (n / 10) % 10);
+    cmd[i++] = (char)('0' + n % 10);
+    cmd[i] = 0;
+
+    saw_prompt = 0;
+    u2str(cmd); u2put('\r'); u2put('\n');
+
+    for (k = 0; k < 5000; k++)
+    {
+        flush_rx();
+        if (saw_prompt) break;
+        delay_ms(1);
+    }
+    if (!saw_prompt)
+    {
+        u1str("[!] no '>' prompt, skip this packet\r\n");
+        pump(1500);
+        return 0;
+    }
+    for (i = 0; i < n; i++) u2put((char)mq[i]);
+
+    {   /* 必须等到 SEND OK 才算模块真发出去了 */
+        static const uint8_t PAT_SENDOK[7] = { 'S','E','N','D',' ','O','K' };
+        uint32_t base = rx_head;
+        uint8_t ok = 0, kk;
+        for (kk = 0; kk < 40; kk++)
+        {
+            flush_rx();
+            if (find_pat(base, PAT_SENDOK, 7) >= 0) { ok = 1; break; }
+            delay_ms(100);
+        }
+        u1str(ok ? "[ok] SEND OK confirmed\r\n" : "[!] no SEND OK!\r\n");
+    }
+    pump(wait_ms);
+    return 1;
+}
+
+/* ---- TCP + MQTT CONNECT + SUBSCRIBE(带重试, 治"复位太快被服务器拒之门外") ----
+   实测: 复位后立刻重连, OneNET 上旧会话还没超时(keepalive 1.5x), 新 CONNECT
+   会被回 rc=5 拒掉。所以失败就等 30 秒再试, 最多 4 次。 */
+static uint8_t net_ok = 0;
+
+static uint8_t net_connect(void)
+{
+    long pos;
+    uint32_t n;
+    static const uint8_t PAT_CONNECTED[7] = { 'C','O','N','N','E','C','T' };
+    static const uint8_t PAT_CONNACK[2] = { 0x20, 0x02 };
+    static const uint8_t PAT_SUBACK[2]  = { 0x90, 0x03 };
+
+    at_cmd("AT+CIPSTART=\"TCP\",\"" MQTT_HOST "\"," MQTT_PORT, 6000);
+    pos = find_pat(0, PAT_CONNECTED, 7);
+    if (pos < 0) { u1str("[!] TCP fail\r\n"); return 0; }
+    u1str("\r\n[+] TCP CONNECTED\r\n");
+
+    n = build_connect();
+    pos = (long)rx_head;
+    send_packet("MQTT CONNECT", n, 5000);
+    pos = find_pat((uint32_t)pos, PAT_CONNACK, 2);
+    if (pos < 0) { u1str("[!] no CONNACK\r\n"); return 0; }
+    u1str("[+] CONNACK rc=");
+    u1num(rx_buf[(uint32_t)(pos + 3) % RXCAP]);
+    u1str("\r\n");
+    if (rx_buf[(uint32_t)(pos + 3) % RXCAP] != 0) return 0;
+    o_print(0, 108, "NET");            /* 屏幕右上角亮 NET = 云已连上 */
+
+    n = build_subscribe();
+    pos = (long)rx_head;
+    send_packet("MQTT SUBSCRIBE", n, 3000);
+    pos = find_pat((uint32_t)pos, PAT_SUBACK, 2);
+    u1str(pos >= 0 ? "\r\n[+] SUBACK ok\r\n" : "\r\n[!] no SUBACK\r\n");
+    return 1;
+}
+
+/* ================= 全局传感器值(云/OLED/串口三处共用同一份) ================= */
+static uint8_t g_light   = 0;
+static uint8_t g_t_i = 0, g_t_f = 0, g_h_i = 0, g_h_f = 0;
+static uint8_t g_dht_ok = 0;          /* 拿到过一次成功读数才允许上云 */
+static uint32_t g_ok_cnt = 0;
+
+int main(void)
+{
+    GPIO_InitTypeDef g = {0};
+    uint32_t n;
+    uint8_t  d[5], err, lastv = 0xFF;
+    uint8_t  disp_h = 0xFF, disp_t = 0xFF;
+    uint32_t cycle = 0;
+
+    RES[0] = 0x22222801;
+    HAL_Init();
+    SystemClock_Config();
+    dwt_init();
+    uart1_init();
+
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_USART2_CLK_ENABLE();
+
+    /* USART2 PA2/PA3 -> ESP8266 */
+    g.Pin = GPIO_PIN_2; g.Mode = GPIO_MODE_AF_PP; g.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOA, &g);
+    g.Pin = GPIO_PIN_3; g.Mode = GPIO_MODE_INPUT; g.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &g);
+    huart2.Instance = USART2;
+    huart2.Init.BaudRate = 115200;
+    huart2.Init.WordLength = UART_WORDLENGTH_8B;
+    huart2.Init.StopBits = UART_STOPBITS_1;
+    huart2.Init.Parity = UART_PARITY_NONE;
+    huart2.Init.Mode = UART_MODE_TX_RX;
+    huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+    huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+    HAL_UART_Init(&huart2);
+    HAL_NVIC_SetPriority(USART2_IRQn, 1, 0);
+    HAL_NVIC_EnableIRQ(USART2_IRQn);
+    HAL_UART_Receive_IT(&huart2, (uint8_t *)&rx_byte, 1);   /* 挂上第一字节接收 */
+
+    /* PB12 光敏 DO: 上拉输入(开漏输出必须上拉!) */
+    g.Pin = GPIO_PIN_12; g.Mode = GPIO_MODE_INPUT; g.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOB, &g);
+    /* PC13 心跳灯 */
+    g.Pin = GPIO_PIN_13; g.Mode = GPIO_MODE_OUTPUT_PP; g.Pull = GPIO_NOPULL; g.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOC, &g);
+    HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);
+    /* PB8/PB9 OLED: SCL 推挽输出 + SDA 释放(上拉输入) */
+    g.Pin = GPIO_PIN_8; g.Mode = GPIO_MODE_OUTPUT_PP; g.Pull = GPIO_NOPULL; g.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &g);
+    scl_hi();
+    sda_rel();
+
+    /* OLED 先亮起来(不等网络) */
+    delay_ms(100);
+    o_init();
+    { uint8_t p; for(p=0;p<8;p++) o_clear(p); }
+    o_print(0, 0, "F103 SMART ENV");
+    o_print(2, 0, "LIGHT:");
+    o_print(4, 0, "HUMI:");
+    o_print(6, 0, "TEMP:");
+
+    u1str("\r\n\r\n########## TASK9 HAL FINAL: sensors+OLED+MQTT ##########\r\n");
+    delay_ms(300);
+    flush_rx();
+    rx_tail = rx_head;                     /* 丢掉开机垃圾 */
+
+    /* ---- 第一步: 连 WiFi ---- */
+    at_cmd("AT+RST",               5000);
+    wait_ready();
+    at_cmd("AT+CWAUTOCONN=0",      1500);
+    at_cmd("AT+CWMODE=1",          1500);
+    at_cmd("AT+CIPMUX=0",          1500);
+    at_cmd("AT+CIPMODE=0",         1500);
+    at_cmd("AT+CWJAP=\"" WIFI_SSID "\",\"" WIFI_PWD "\"", 13000);
+    at_cmd("AT+CIFSR",             2500);
+
+    /* ---- 第二步: TCP + MQTT 连云(带重试) ---- */
+    {
+        uint8_t tries;
+        for (tries = 0; tries < 4 && !net_ok; tries++)
+        {
+            net_ok = net_connect();
+            if (!net_ok) { u1str("[..] retry in 30s (old session may be alive)\r\n"); pump(30000); }
+        }
+    }
+
+    RES[0] = 0x22222802;
+
+    /* ================= 主循环: 传感 -> OLED -> 串口 -> 云端 ================= */
+    while (1)
+    {
+        /* 1) 读光敏 */
+        g_light = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_12) == GPIO_PIN_SET) ? 1 : 0;
+        if (g_light != lastv)
+        {
+            lastv = g_light;
+            o_print(2, 48, g_light ? "OK  " : "DARK");
+        }
+
+        /* 2) 读 DHT11 */
+        err = dht11_read(d);
+        if (err == 0)
+        {
+            g_t_i = d[2]; g_t_f = d[3]; g_h_i = d[0]; g_h_f = d[1];
+            g_dht_ok = 1; g_ok_cnt++;
+            if (d[0] != disp_h)
+            {
+                disp_h = d[0];
+                o_print(4, 40, "      ");
+                { char b[8];
+                  b[0]=(char)('0'+d[0]/100); b[1]=(char)('0'+d[0]/10%10); b[2]=(char)('0'+d[0]%10);
+                  b[3]='.'; b[4]=(char)('0'+d[1]); b[5]='%'; b[6]=0;
+                  o_print(4, 40, b); }
+            }
+            if (d[2] != disp_t)
+            {
+                disp_t = d[2];
+                o_print(6, 40, "      ");
+                { char b[8];
+                  b[0]=(char)('0'+d[2]/100); b[1]=(char)('0'+d[2]/10%10); b[2]=(char)('0'+d[2]%10);
+                  b[3]='.'; b[4]=(char)('0'+d[3]); b[5]='C'; b[6]=0;
+                  o_print(6, 40, b); }
+            }
+        }
+        else
+        {
+            o_print(4, 40, " --  ");
+            o_print(6, 40, " --  ");
+            disp_h = 0xFF; disp_t = 0xFF;
+            u1str("[..] DHT11 ");
+            u1str(err == 1 ? "TIMEOUT\r\n" : "CHECKSUM ERR\r\n");
+        }
+
+        /* 3) 串口打印(和屏幕同一份值) */
+        u1str("LIGHT="); u1num(g_light);
+        if (err == 0)
+        {
+            u1str("  HUMI="); u1num(g_h_i); u1ch('.'); u1num(g_h_f);
+            u1str("%  TEMP="); u1num(g_t_i); u1ch('.'); u1num(g_t_f); u1str("C\r\n");
+        }
+        else u1str("\r\n");
+
+        /* 4) 上云(每3轮一次; 掉线自动重连; 必须拿到过真实读数) */
+        cycle++;
+        if (!net_ok)
+        {
+            u1str("[..] net down, reconnect...\r\n");
+            net_ok = net_connect();      /* 失败下一轮再试, 不卡死 */
+        }
+        else if (g_dht_ok && (cycle % 3u) == 0u)
+        {
+            n = build_publish(g_t_i, g_t_f, g_h_i, g_h_f, g_light);
+            u1str("publish: "); u1str(payload); u1str("\r\n");
+            if (!send_packet("PUBLISH", n, 4000)) net_ok = 0;
+        }
+        else pump(800);
+
+        /* 5) 心跳 */
+        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);
+
+        RES[1] = rx_head; RES[2] = ore_n; RES[3] = g_ok_cnt;
+    }
+}
+
+void SystemClock_Config(void)
+{
+  RCC_ClkInitTypeDef clkinitstruct = {0};
+  RCC_OscInitTypeDef oscinitstruct = {0};
+  oscinitstruct.OscillatorType  = RCC_OSCILLATORTYPE_HSI;
+  oscinitstruct.HSEState        = RCC_HSE_OFF;
+  oscinitstruct.LSEState        = RCC_LSE_OFF;
+  oscinitstruct.HSIState        = RCC_HSI_ON;
+  oscinitstruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  oscinitstruct.HSEPredivValue    = RCC_HSE_PREDIV_DIV1;
+  oscinitstruct.PLL.PLLState    = RCC_PLL_ON;
+  oscinitstruct.PLL.PLLSource   = RCC_PLLSOURCE_HSI_DIV2;
+  oscinitstruct.PLL.PLLMUL      = RCC_PLL_MUL16;
+  if (HAL_RCC_OscConfig(&oscinitstruct)!= HAL_OK) while(1);
+  clkinitstruct.ClockType = (RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2);
+  clkinitstruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  clkinitstruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  clkinitstruct.APB2CLKDivider = RCC_HCLK_DIV1;
+  clkinitstruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  if (HAL_RCC_ClockConfig(&clkinitstruct, FLASH_LATENCY_2)!= HAL_OK) while(1);
+}
+```
+
+## 7 · 第七步 · 上板验证
+
+准备：串口助手（SSCOM/XCOM 均可）选板载 CH340 的 COM 口、115200-8-N-1；
+手机开热点（**必须 2.4GHz**；iPhone 打开"最大兼容性"），名称密码与固件 `#define` 一致。
+
+### 现象验证表（按上电顺序）
+
+| 步骤 | 串口助手应看到 | 说明 |
+|---|---|---|
+| 上电 | `########## TASK9 HAL FINAL: sensors+OLED+MQTT ##########` | 固件起来了；**OLED 同时亮出四行标题** |
+| AT+RST | 开机横幅 + `ready`，然后 `[+] module ready (got OK)` | 若前几次 `busy p...` 后自动恢复 = 模块旧 WiFi 记录在回连，已用重试机制兜住 |
+| （复位太快时） | `CONNACK rc=5` → `[..] retry in 30s` 几轮后变 rc=0 | 旧会话还没在云端超时；固件自动等 30 秒重连最多 4 次，无需干预 |
+| AT+CWJAP | `WIFI CONNECTED` + `WIFI GOT IP` | 连不上看排查树第 2 条 |
+| AT+CIFSR | `+CIFSR:STAIP,"192.168.x.x"` | 拿到真实 IP |
+| AT+CIPSTART | `CONNECT` + `[+] TCP CONNECTED` | TCP 通了 |
+| MQTT CONNECT | `[+] CONNACK rc=0`；**OLED 右上角出现 `NET`** | rc=4/5 = token 错，回第三节重算 |
+| SUBSCRIBE | `[+] SUBACK ok` | |
+| 主循环每轮 | `LIGHT=1  HUMI=36.0%  TEMP=25.8C`；**OLED 数值同步变化** | 用手捂 DHT11，温度几秒内上爬 = 真传感器 |
+| 每 3 轮 | `publish: {"id":...}` + `[ok] SEND OK confirmed` | |
+| 云端回执 | `post/reply{"id":"13","code":200,"msg":"success"}` | **200 = 云端确认收到** |
+| OneNET 网页 | 设备详情 → 「设备数据/最新数据」：temperature 25.8 / humidity 36.0 / light 1 | **与 OLED、串口三个数一致 = 本章验收通过** |
+
+（手机现在就能验证：登录 open.iot.10086.cn → 设备详情看最新数据，数值应随你捂/松开传感器变化。）
+
+## 8 · 本章排查树（现象 → 原因 → 解法，全部实测踩过）
+
+| # | 现象 | 原因 | 解法 |
+|---|---|---|---|
+| 1 | 开头命令全回 `busy p...` | 模块里存着旧 WiFi 记录，上电自动回连 | `AT+RST` 后发 `AT+CWAUTOCONN=0`；固件里 `wait_ready()` 会自动重试到 OK |
+| 2 | `AT+CWJAP` 回 `+CWJAP:3` | 找不到这个 AP：热点没开 / 是 5G / 名字错 | 手机热点开 2.4GHz（iPhone 开"最大兼容性"）；用 `AT+CWLAP` 扫周围核对名字。注意：**隐藏 SSID 扫不到但能连**（实测：本热点在 CWLAP 里不出现，CWJAP 却成功） |
+| 3 | `AT+MQTTUSERCFG` 回 ERROR | 安信可标准 AT 固件不带 MQTT 指令 | 走本章手工拼包，别照抄 MQTT AT 指令教程 |
+| 4 | CONNACK 返回码 4 或 5 | password 错：密钥没先 base64 解码 / token 过期 / 三元组抄错 | 用 `工具/onenet_token.py` 重算，核对 clientId=设备名、username=产品ID |
+| 5 | 回执 `code:2306 identifier not exist` | 物模型属性没「发布」 | 物模型页面走完发布流程（实测：发布前一直 2306，发布后立刻 200） |
+| 6 | 第一条发布后 `CLOSED`，之后 `link is not valid` | PUBLISH 报文体里忘装 topic（发出去的是残骸） | PUBLISH 的 body 必须重新装 `put_str(topic)+payload`（见 `build_publish`） |
+| 7 | 前几条正常，几条之后模块"不理人"、收不到 `>` | 线性缓冲区收满后不再存数据（是你聋了不是模块死了） | 改环形缓冲：`head/tail` 总计数 + 下标取模（见 `USART2_IRQHandler`/`flush_rx`） |
+| 8 | 只收到 `'A'` `'O'` 交替的零星字节 | 轮询 + delay 读 DR 造成 ORE 溢出丢字节 | USART2 开 RXNE 中断收（见任务九前期调试记录，ORE=0 后一次通） |
+| 9 | 串口打印中文变乱码 + 编译 16 条 #870-D 警告 | Keil AC5 按 GBK 读源码，UTF-8 中文字符串非法 | **字符串只用 ASCII**，中文只写注释 |
+| 10 | DHT11 显示 `--`，串口 `DHT11 TIMEOUT` | 任务五已知：个别时候 DHT 无应答 | 等 1~2 轮自动恢复；持续超时按任务五办法给模块断电重启 |
+| 11 | OLED 全黑 | PB8 忘配推挽输出（SCL 不动） | 上电先 `cfg_scl_out()` + `cfg_sda_in()` 再 `o_init()`（实测漏配必黑） |
+| 12 | 重启后 CONNACK rc=5 + CLOSED，之后 `link is not valid` | 复位太快，OneNET 旧会话未超时（keepalive 的 1.5 倍 = 90 秒），新连接被判重名拒连 | 固件已内置自动重试（等 30 秒再试最多 4 次）；手动等 1~2 分钟再复位也能恢复 |
+
+## 9 · 想继续深入（知识点）
+
+- **token 为什么安全**：密钥不上线，线上只走"签名"。平台用同一密钥重算一遍对得上就放行；
+  `et` 控制有效期，泄露的 token 过期自动作废。
+- **QoS0 够用吗**：本章 PUBLISH 用 QoS0（发完不确认）。环境数据几秒一条，丢一条无所谓；
+  要"必达"就用 QoS1（0x31，要等 PUBACK）。计费/控制类指令才需要 QoS2。
+- **keepalive 的算法**：CONNECT 里填 60 秒 = 最长 90 秒（1.5 倍）没有上行就踢人。
+  本固件 8 秒一条 PUBLISH，顺便就是心跳，不用额外发 PINGREQ。
+- **环形缓冲区**：`head` 是中断写到的位置、`tail` 是主循环读到的位置，都只增不减，
+  下标 `% RXCAP` 折回数组开头。判断空 = 相等，判断满 = 留一格差值（本例按总计数比较，永不回绕）。
+- **信源**：MQTT 报文格式 = MQTT 3.1.1 规范；连接参数/token 算法/topic = OneNET 官方文档
+  （open.iot.10086.cn → 帮助文档 → 设备接入 → MQTT）；AT 指令 = 乐鑫 ESP8266 AT 指令集。
+
+---

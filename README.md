@@ -12,7 +12,11 @@ STM32F103C8T6 精英板（嘉立创 v1.3）外设驱动学习项目，**HAL 库*
 | 02-GPIO输出-LED 1s闪烁 | GPIO/HAL_Delay 中断派/SysTick | ✅ 上板验收 |
 | 03-GPIO输入-按键控LED | Pull 显式字段/TogglePin/非阻塞分片 | ✅ 上板验收 |
 | 04-USART-串口收发 | UART 句柄/HAL_UART_Init 自动算 BRR/阻塞收发 | ✅ 上板验收 |
-| （后续按任务清单推进） | | |
+| 05-任务五 温湿度 DHT11 | 单总线时序/DWT 微秒延时 | ✅ 上板验收 |
+| 06-任务六 光敏（烟雾替身） | 开漏必须上拉坑 | ✅ 上板验收 |
+| 07-任务七 OLED | 软件 I2C 位带 | ✅ 上板验收 |
+| 08-任务八 SPI Flash | W25Q16 实测+掉电不丢写测试 | ✅ 上板验收 |
+| 09-任务九 WiFi 上云 | ESP8266 AT+手工 MQTT+OneNET | ✅ 上板验收 |
 
 ## 工程一览
 
@@ -44,6 +48,8 @@ f103-hal-lab/
 | 四 | 蜂鸣器和继电器 | `Src/chapters/ch4_buzzer_relay.c` | ✅ 烧录验证 |
 | 五+六 | 温湿度 + 光敏打印 | `Src/chapters/ch5_6_dht11_light_hal.c` | ✅ 烧录验证 |
 | 七 | OLED 显示 | 见上表文件（含 OLED 代码）| ✅ 烧录验证 |
+| 八 | SPI Flash 读写+写入测试 | `Src/chapters/ch8_spi_flash_hal.c` / `ch8_spi_flash_writetest_hal.c` | ✅ 烧录验证 |
+| 九 | WiFi上云 ESP8266→OneNET | `Src/chapters/ch9_wifi_onenet_hal.c` | ✅ 烧录验证 |
 
 **接线定案**：DHT11=VCC/3V3 + DAT/B14 + GND｜光敏=VCC/3V3 + DO/B12 + GND｜OLED=VCC·GND·SCL/B8·SDA/B9
 **三腿差异**：光敏上拉输入 = `GPIO_Mode_IPU`（标准库）/ `Pull=GPIO_PULLUP`（HAL）/ `CRH=0x8 且 ODR=1`（寄存器）
