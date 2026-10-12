@@ -4,6 +4,36 @@ STM32F103C8T6 精英板（嘉立创 v1.3）外设驱动学习项目，**HAL 库*
 
 > 本仓库是三条学习线之一：同一套外设功能（LED → 串口 → 按键 → 蜂鸣器/继电器 → 温湿度 → 烟雾 → OLED → W25Q Flash → ESP8266 连 OneNET）分别用 **[标准库] / [HAL 库（本仓库）] / [寄存器]** 三种方式各实现一遍。
 
+## ⚡ 快速开始（克隆下来 → 点亮，5 分钟）
+
+**1. 拿到代码（二选一）**
+- 会 git：`git clone git@github.com:Karry-King-code/f103-hal-lab.git`（需先配好 SSH 密钥；没有就下载 ZIP）
+- 不会 git：网页上点绿色 **Code** → **Download ZIP**。
+  ⚠️ 文档文件名是中文（如 `教程-标准库.md`），解压请用 **Windows 自带解压或 7-Zip**，
+  老牌解压工具可能把中文名解成乱码；用 git clone 则完全无此问题。
+
+**2. 装软件（一次性）**：Keil MDK5 + STM32F1xx 器件包 + STM32CubeProgrammer，
+详细步骤（装哪个版本、pack 放哪、踩过的坑）见 docs 里【环境搭建】章节。
+
+**3. 打开工程并编译**：双击 ``MDK-ARM/Project.uvprojx`` → Keil 里点 **Rebuild（F7）**，
+底部看到 `0 Error(s)` 即成功。
+
+**4. 烧录（ST-Link 接板子，4 根线 SWD）**：
+```bash
+cd HAL库/f103-hal-lab
+STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst
+```
+> ⚠️ 两个实测坑：①本模板没开 hex 选项，产物是 `.axf`（ELF），CubeProgrammer 直接支持；
+> ②命令行里含中文的路径会被 CubeProgrammer 吞掉（报 `invalid ELF file`）。
+> 遇到就把 axf 拷到纯英文目录（如 `D:/flash/`）再烧。
+
+**5. 验证**：板上绿灯 1 秒闪 = 环境全通。之后每章照着做：
+`Src/chapters/chX_*.c` 是每章的完整代码（已烧录验证），
+**整份复制覆盖 `Src/main.c`** 再编译烧录，现象对照该章验证表。
+
+---
+
+
 ## 教程目录
 
 | 章节 | 内容 | 状态 |
