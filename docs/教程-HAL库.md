@@ -296,6 +296,13 @@ MCU Reset
 ---
 ---
 
+
+### 手册依据截图：时钟使能位（任务一用）
+
+> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
+
+![手册依据：RM0008 中文版 PDF 第77页 —— RCC_APB2ENR 位定义：bit4 IOPCEN。__HAL_RCC_GPIOC_CLK_ENABLE() 最终写的就是这个位](images/rm0008_p77_apb2enr.png)
+
 # 任务二 · 串口收发
 
 ### 硬件事实（三腿一致）
@@ -358,6 +365,13 @@ BRR = 0x22C = 0b0010 0010 1100
 验算：实际波特率 = 64e6 / (16 × (34 + 12/16)) = **115207.4**，误差 **+0.006%**——UART 容差 ±2~3%，纹丝不动 ✓。
 
 > **本节最大的知识点**：波特率分频值是"相对你的总线时钟"算的。同一个 115200，72MHz 时写 0x271，64MHz 时写 0x22C。HAL 靠 `HAL_RCC_GetPCLK2Value()` 运行时取时钟自动适配；寄存器腿就得自己算。
+
+### 手册依据截图：USART_BRR 位定义
+
+> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
+
+![手册依据：RM0008 中文版 PDF 第525页 —— USART_BRR 位表：DIV_Mantissa/DIV_Fraction。HAL 算出的就是写进这个寄存器的值](images/rm0008_p525_usart_brr.png)
+
 
 ### 收发：HAL 的阻塞 API
 
@@ -512,6 +526,15 @@ STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rs
 | 读按键 | `GPIO_ReadInputDataBit` | `HAL_GPIO_ReadPin` | `GPIOB->IDR & (1<<7)` |
 | 翻转 LED | 读-反-写三行 | **`HAL_GPIO_TogglePin` 一行** | `GPIOC->ODR ^= 1<<13` |
 | 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
+
+
+### 手册依据截图：GPIO 模式编码（任务二/三用）
+
+> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
+
+![手册依据：RM0008 中文版 PDF 第113页 —— CNF/MODE 编码表（Pull=GPIO_PULLUP 对应上拉输入 10/01 组合）](images/rm0008_p113_gpio_modes.png)
+
+![手册依据：RM0008 中文版 PDF 第114页 —— GPIOx_CRH 位表：HAL 改一个脚也是改这 4 个位](images/rm0008_p114_crh.png)
 
 # 任务四 · 蜂鸣器和继电器
 
