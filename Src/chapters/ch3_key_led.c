@@ -6,7 +6,6 @@
   * @note    实测硬件：KEY1=PB7（上拉输入，按下=0）；绿灯=PC13（低电平亮）
   *          逻辑与标准库版完全相同：按一下开始 1s 闪烁，再按一下停止
   *          ——只是把标准库函数全部换成 HAL 函数
-  *          页码注释约定：RM0008 = 《STM32F103xx参考手册(中文参考)》，页码为 PDF 阅读器页码
   ******************************************************************************
   * @attention
   *
@@ -38,29 +37,28 @@ int main(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-  HAL_Init();                                        /* 底层=SysTick 1ms 中断 + NVIC 分组 */
+  HAL_Init();
 
   /* Configure the system clock to 64 MHz */
-  SystemClock_Config();                              /* 底层=写 RCC_CR/CFGR/FLASH_ACR（详见任务二注释） */
+  SystemClock_Config();
 
   /* ==== 按键 PB7：上拉输入（HAL 把"上拉/下拉"做成显式的 Pull 字段） ==== */
-  __HAL_RCC_GPIOB_CLK_ENABLE();                      /* 底层=RCC->APB2ENR bit3(IOPBEN)；RM0008 中文版 PDF 第77页 */
-  __HAL_RCC_GPIOC_CLK_ENABLE();                      /* 底层=APB2ENR bit4(IOPCEN) */
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
 
   GPIO_InitStruct.Pin  = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;            /* MODE=00 输入 */
-  GPIO_InitStruct.Pull = GPIO_PULLUP;               /* 标准库藏进 ODR 的动作，这里明说。
-                                                       HAL 内部：CNF 填 10(上/下拉) 且把 ODR bit7 置 1 —— 上拉真正由 ODR 决定（PDF 第113页编码表） */
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);            /* 底层=读改写 GPIOB->CRL 的 [31:28]（PB7 是第 7 格）+ 写 ODR；第114页位表 */
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;               /* 标准库藏进 ODR 的动作，这里明说 */
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* ==== 绿灯 PC13：推挽输出 ==== */
   GPIO_InitStruct.Pin   = GPIO_PIN_13;
-  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;       /* CNF=00 + MODE=10 = 0b0010 填进 CRH[23:20] */
+  GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull  = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);            /* 底层=读改写 GPIOC->CRH */
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 初始：灭；底层=GPIOC->BSRR 置位（PDF 第115页） */
+  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_13, GPIO_PIN_SET);   /* 初始：灭 */
 
   /* Infinite loop */
   while (1)
@@ -79,11 +77,11 @@ int main(void)
       if (++slice >= 50)
       {
         slice = 0;
-        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);        /* HAL 自带翻转函数！底层=翻转 GPIOC 的 bit13（ODR 异或，或新版 HAL 用 BSRR 原子翻转） */
+        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);        /* HAL 自带翻转函数！ */
       }
     }
 
-    HAL_Delay(10);                                     /* ③ 全局节拍器（靠 SysTick 中断累加 uwTick） */
+    HAL_Delay(10);                                     /* ③ 全局节拍器 */
   }
 }
 
@@ -94,7 +92,7 @@ int main(void)
 static uint8_t key_pressed(void)
 {
   static uint8_t last = 1;
-  uint8_t now = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET) ? 0 : 1;   /* 底层=读 GPIOB->IDR 的 bit7 */
+  uint8_t now = (HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_7) == GPIO_PIN_RESET) ? 0 : 1;
   uint8_t evt = 0;
 
   if (last == 1 && now == 0)                           /* 1->0 = 按下沿 */
@@ -124,13 +122,13 @@ void SystemClock_Config(void)
   oscinitstruct.OscillatorType  = RCC_OSCILLATORTYPE_HSI;
   oscinitstruct.HSEState        = RCC_HSE_OFF;
   oscinitstruct.LSEState        = RCC_LSE_OFF;
-  oscinitstruct.HSIState        = RCC_HSI_ON;         /* RCC_CR bit0=1 开内部 8MHz */
+  oscinitstruct.HSIState        = RCC_HSI_ON;
   oscinitstruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   oscinitstruct.HSEPredivValue    = RCC_HSE_PREDIV_DIV1;
   oscinitstruct.PLL.PLLState    = RCC_PLL_ON;
   oscinitstruct.PLL.PLLSource   = RCC_PLLSOURCE_HSI_DIV2;
-  oscinitstruct.PLL.PLLMUL      = RCC_PLL_MUL16;      /* 8/2*16=64MHz */
-  if (HAL_RCC_OscConfig(&oscinitstruct)!= HAL_OK)     /* 寄存器组表 RM0008 PDF 第69页 */
+  oscinitstruct.PLL.PLLMUL      = RCC_PLL_MUL16;
+  if (HAL_RCC_OscConfig(&oscinitstruct)!= HAL_OK)
   {
     while(1);
   }
@@ -139,7 +137,7 @@ void SystemClock_Config(void)
   clkinitstruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   clkinitstruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
   clkinitstruct.APB2CLKDivider = RCC_HCLK_DIV1;
-  clkinitstruct.APB1CLKDivider = RCC_HCLK_DIV2;       /* PCLK1=32MHz */
+  clkinitstruct.APB1CLKDivider = RCC_HCLK_DIV2;
   if (HAL_RCC_ClockConfig(&clkinitstruct, FLASH_LATENCY_2)!= HAL_OK)
   {
     while(1);
