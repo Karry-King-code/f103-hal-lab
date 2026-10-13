@@ -163,6 +163,39 @@ main() 内:
 
 # 任务一 · 点亮 LED 灯
 
+### 看图说话：原理图与手册原文
+
+任务一的"LED 闪烁"要从两张图开始：板子原理图（LED 到底怎么接的）和参考手册（引脚背后的寄存器怎么定义的）。导师说的"有理有据"就是这两样：电路有原理图，寄存器有手册页码，谁都能翻到同一页核对。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— LED 与按键驱动电路（LED3 红色/LED1 绿色，各经 4.7kΩ 电阻接 3V3；SW2~SW4 按键 KEY3/KEY2/KEY1，按下接地）](images/schem_led_key.png)
+
+**怎么读这张图**：从左往右看：3V3 → LED → 电阻 → 网络（LED3/LED1）→ 芯片引脚。LED 正极接 3V3，所以**引脚输出低电平才亮**（灌电流），这就是代码里"写 0 点灯"的依据；按键左端接地，所以**引脚要配上拉、按下读到的才是 0**。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— Pin Mapping 总表：网络名 ↔ 芯片引脚对照](images/schem_pinmap.png)
+
+**怎么读这张图**：左列是网络名（LED3、KEY1、UART1_TX、ESP_TX……），相邻列就是芯片引脚号。原理图上所有"飞线"关系都靠这张表查——以后想知道"某个外设到底接在哪个脚"，先查这张表。
+
+![手册依据：RM0008 中文版 PDF 第28页 —— 存储器映射总表（RCC 基址 0x4002 1000、GPIOC 0x4001 1000 等）](images/rm0008_p28_memory_map.png)
+
+**怎么读这张图**：这是全芯片的"门牌号簿"：每一行=一个外设+它的基地址。写寄存器前先在这张表查基地址。
+
+![手册依据：RM0008 中文版 PDF 第69页 —— RCC 寄存器组偏移表（0x00 CR / 0x04 CFGR / 0x18 APB2ENR …）](images/rm0008_p69_rcc_map.png)
+
+**怎么读这张图**：基地址+偏移=寄存器真身地址：RCC 在 0x4002 1000，APB2ENR 偏移 0x18，所以地址=0x40021018。以后查任何寄存器地址都是这两步。
+
+![手册依据：RM0008 中文版 PDF 第77页 —— RCC_APB2ENR 位定义表（bit4 IOPCEN）](images/rm0008_p77_apb2enr.png)
+
+**怎么读这张图**：按位看：bit4 名叫 IOPCEN（I/O Port C Enable）。代码里的 1u<<4、0x00000010、RCC_APB2ENR_IOPCEN 三种写法写的都是它。
+
+![手册依据：RM0008 中文版 PDF 第105页 —— GPIO 寄存器组偏移表（0x00 CRL / 0x04 CRH / 0x08 IDR / 0x0C ODR / 0x10 BSRR / 0x14 BRR）](images/rm0008_p105_gpio_map.png)
+
+**怎么读这张图**：GPIOC 基址 0x4001 1000 + 偏移，就是代码里 GPIOC->CRH/ODR/BSRR 的真身。
+
+![手册依据：RM0008 中文版 PDF 第114页 —— GPIOx_CRH 位表（每 4 位=CNF+MODE，管 8~15 号脚）](images/rm0008_p114_crh.png)
+
+**怎么读这张图**：PC13 用 CRH 的 [23:20] 那一格；往格里填"输出模式"的编码，引脚就有了方向和速度。
+
+
 > 同一个灯（PC13 绿灯），换 HAL 库实现。时钟 64MHz（模板默认 HSI），delay 用 HAL_Delay。
 
 ## 硬件事实（实测，与标准库版一致）
@@ -297,13 +330,40 @@ MCU Reset
 ---
 
 
-### 手册依据截图：时钟使能位（任务一用）
-
-> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
-
-![手册依据：RM0008 中文版 PDF 第77页 —— RCC_APB2ENR 位定义：bit4 IOPCEN。__HAL_RCC_GPIOC_CLK_ENABLE() 最终写的就是这个位](images/rm0008_p77_apb2enr.png)
-
 # 任务二 · 串口收发
+
+### 看图说话：原理图与手册原文
+
+串口要两张图：板子上的 USB 转串口电路（电脑怎么跟芯片说话），和手册里的 USART 寄存器（芯片内部谁在收发）。
+
+![手册依据：嘉立创 v1.3 原理图 第2页 —— CH340N USB 转 TTL 电路（USB_RXD/USB_TXD 网络）](images/schem_usbttl.png)
+
+**怎么读这张图**：CH340N 是"翻译官"：USB 信号 ↔ UART 电平。它右边的 USB_RX/USB_TX 网络经 Pin Mapping 表接到芯片 PA10/PA9——所以电脑和板子的对话走的就是 USART1。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— UART 排针座（H8=UART1、H9=UART2）](images/schem_uart.png)
+
+**怎么读这张图**：板上预留的串口排针：任务九的 ESP8266 用的 USART2(PA2/PA3) 也从这里能找到物理出处。
+
+![手册依据：RM0008 中文版 PDF 第517页 —— USART 寄存器组偏移表（0x00 SR / 0x04 DR / 0x08 BRR / 0x0C CR1）](images/rm0008_p517_usart_map.png)
+
+**怎么读这张图**：USART1 基址 0x4001 3800（查存储器映射）+ 偏移=各寄存器地址；发数据写 DR，看状态查 SR。
+
+![手册依据：RM0008 中文版 PDF 第525页 —— USART_BRR 位表（DIV_Mantissa + DIV_Fraction）](images/rm0008_p525_usart_brr.png)
+
+**怎么读这张图**：波特率发生器的分频值：USARTDIV=时钟/波特率。72MHz/115200=625=0x271——代码里 BRR=0x271 的出处就在这页。
+
+![手册依据：RM0008 中文版 PDF 第518页 —— USART_CR1 位表（bit13 UE 总使能 / bit12 M 字长 / bit10 PCE 校验 / bit3 TE 发送 / bit2 RE 接收）](images/rm0008_p518_usart_cr1.png)
+
+**怎么读这张图**：这就是标准库 USART_Init 和 HAL_UART_Init 内部替你填的那一堆位。寄存器腿为什么要把 UE 和 TE|RE 分两次写，也看这张表——UE 是总开关。
+
+![手册依据：RM0008 中文版 PDF 第521页 —— USART_SR 位表上半（bit7 TXE 发送数据寄存器空 / bit6 TC 发送完成）](images/rm0008_p521_usart_sr.png)
+
+**怎么读这张图**：发送循环 `while (!(SR & TXE))` 里的 TXE 就是 bit7——1 表示"可以写下一个字节了"。TXE 与 TC 的区别：TXE=数据寄存器空，TC=整帧发完（工程里用 TXE 就够）。
+
+![手册依据：RM0008 中文版 PDF 第523页 —— USART_SR 位表下半（bit5 RXNE 读数据寄存器非空 / bit3 ORE 溢出 / bit4 IDLE 空闲）](images/rm0008_p523_usart_sr.png)
+
+**怎么读这张图**：接收判断 `SR & RXNE` 是 bit5；ORE(bit3) 是"上一个字节还没读走又来一个"，串口丢字节的经典原因（任务九 ESP8266 前期就是这个坑）。
+
 
 ### 硬件事实（三腿一致）
 
@@ -366,55 +426,6 @@ BRR = 0x22C = 0b0010 0010 1100
 
 > **本节最大的知识点**：波特率分频值是"相对你的总线时钟"算的。同一个 115200，72MHz 时写 0x271，64MHz 时写 0x22C。HAL 靠 `HAL_RCC_GetPCLK2Value()` 运行时取时钟自动适配；寄存器腿就得自己算。
 
-### 手册依据截图：USART_BRR 位定义
-
-> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
-
-![手册依据：RM0008 中文版 PDF 第525页 —— USART_BRR 位表：DIV_Mantissa/DIV_Fraction。HAL 算出的就是写进这个寄存器的值](images/rm0008_p525_usart_brr.png)
-
-
-### 收发：HAL 的阻塞 API
-
-```c
-uint8_t banner[] = "=== STM32F103 USART1 READY - HAL (115200-8-N-1) ===
-...";
-HAL_UART_Transmit(&huart1, banner, sizeof(banner) - 1, HAL_MAX_DELAY);   /* 整块发出 */
-
-while (1)
-{
-  if (HAL_UART_Receive(&huart1, &b, 1, HAL_MAX_DELAY) == HAL_OK)  /* 收 1 字节 */
-  {
-    HAL_UART_Transmit(&huart1, &b, 1, HAL_MAX_DELAY);   /* 原样发回 */
-    HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_13);             /* LED 反馈 */
-    g_rx_count++;
-  }
-}
-```
-
-#### 深挖 · 这两个 API 的壳里是什么？
-
-`HAL_UART_Transmit` 内部：逐字节 `等 TXE → 写 DR`——和我们标准库手写的 `uart1_send` 一模一样，只是套了个**超时**参数（传 `HAL_MAX_DELAY`=0xFFFFFFFF 就是不限时）。`HAL_UART_Receive` 内部：`等 RXNE → 读 DR`。**HAL 没有魔法，只是把轮询循环替你写好、加上了超时保险。** 代价：`HAL_UART_Receive` 收不到就一直阻塞——回显程序里这恰好是我们要的行为。
-
-### 编译烧录验证（实测）
-
-```
-UV4.exe -b Project.uvprojx -j0 -o build.log
-→ Program Size: Code=3528 RO-data=428 RW-data=20 ZI-data=1100
-→ 0 Error(s), 0 Warning(s)
-STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rst   （模板无 hex，烧 axf）
-→ Download verified successfully + MCU Reset
-```
-
-实测记录：
-
-| 操作 | 现象 | 结论 |
-|---|---|---|
-| 复位上电 | 横幅出现（带 `- HAL` 标记） | ✅ 发送链路通 |
-| 电脑发 `PING1234` | 原样回显 `PING1234` | ✅ 接收链路通 |
-| 发送期间绿灯 | 每字节翻转一次 | ✅ 联动正常 |
-
-> 体积对照：本章标准库 4160B vs HAL 3528B——**HAL 反而更小**。"寄存器<HAL<标准库"不是铁律，取决于谁带了更多自己的代码（本章标准库版多写了 str 工具函数）。
-
 ## 三腿对照表更新（串口版）
 
 | 动作 | 标准库 | HAL | 寄存器（预告） |
@@ -426,6 +437,23 @@ STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rs
 | 收 1 字节 | 看 RXNE 读 DR | `HAL_UART_Receive` | 看 RXNE 读 DR（裸） |
 
 # 任务三 · 按键控制 LED
+
+### 看图说话：原理图与手册原文
+
+按键章节的依据图：按键电路（为什么必须上拉）和手册里的模式编码表（上拉输入怎么编码）。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— LED 与按键驱动电路（KEY1~3 按下接地）](images/schem_led_key.png)
+
+**怎么读这张图**：按键一端接网络(KEY1~3)，另一端 GND。不按时引脚"悬空"——电平不确定，所以必须配内部上拉，让平时稳定读 1、按下读 0。
+
+![手册依据：RM0008 中文版 PDF 第113页 —— CNF/MODE 编码表（输入模式：00 模拟 / 01 浮空 / 10 上拉下拉）](images/rm0008_p113_gpio_modes.png)
+
+**怎么读这张图**：上拉输入=CNF 选 10、MODE 选 00（输入）；再靠 ODR 位决定是上拉还是下拉。三腿写法不同，填进格子的值相同。
+
+![手册依据：RM0008 中文版 PDF 第114页 —— GPIOx_CRH 位表](images/rm0008_p114_crh.png)
+
+**怎么读这张图**：按键在哪个脚，就找 CRH/CRL 里对应的那 4 位。
+
 
 > 与标准库版（f103-spl-lab 03 章）逻辑一字不差，全部函数换成 HAL 写法。新知识点：**HAL 把"上拉"从隐藏动作变成了显式字段**，以及 **HAL 自带翻转函数**。
 
@@ -528,15 +556,24 @@ STM32_Programmer_CLI -c port=SWD -w MDK-ARM/f103-hal-lab/f103-hal-lab.axf -v -rs
 | 消抖延时 | 自己的 delay_ms | `HAL_Delay` | 自己的 delay_ms |
 
 
-### 手册依据截图：GPIO 模式编码（任务二/三用）
-
-> 以下截图来自《STM32F103xx参考手册(中文参考)》（RM0008，ST 官方文档，见`4_硬件资料/4_硬件资料/5_芯片资料/`）等官方手册 PDF，页码为 PDF 阅读器页码，可自行翻到同一页核对。
-
-![手册依据：RM0008 中文版 PDF 第113页 —— CNF/MODE 编码表（Pull=GPIO_PULLUP 对应上拉输入 10/01 组合）](images/rm0008_p113_gpio_modes.png)
-
-![手册依据：RM0008 中文版 PDF 第114页 —— GPIOx_CRH 位表：HAL 改一个脚也是改这 4 个位](images/rm0008_p114_crh.png)
-
 # 任务四 · 蜂鸣器和继电器
+
+### 看图说话：原理图与手册原文
+
+蜂鸣器和继电器都靠三极管开关大电流——原理图一目了然。
+
+![手册依据：嘉立创 v1.3 原理图 第2页 —— 蜂鸣器驱动（BUZZER 网络 → Q1 三极管）](images/schem_buzzer.png)
+
+**怎么读这张图**：BUZZER 信号经 100Ω 进 NPN 基极，导通时蜂鸣器得电。R7 10K 下拉保证复位期间（引脚悬空）蜂鸣器不响——这解释了为什么初始化要先把引脚拉到不响的电平。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— 继电器驱动（RELAY 网络 → Q2 + 续流二极管 D5）](images/schem_relay.png)
+
+**怎么读这张图**：D5(1N4148) 是继电器线圈的续流二极管：断电瞬间线圈反向电动势从它泄放，保护三极管。看懂这张图就明白"为什么继电器旁边总有个二极管"。
+
+![手册依据：RM0008 中文版 PDF 第115页 —— GPIOx_BSRR / GPIOx_BRR 位表](images/rm0008_p115_bsrr_brr.png)
+
+**怎么读这张图**：置位/复位寄存器：写 1 置 1、写 1 清 0，互不干扰——"原子操作"的出处。
+
 
 ## 第一步 · 引脚从哪来
 
@@ -855,6 +892,23 @@ void SystemClock_Config(void)
 ---
 
 # 任务五 · 温湿度（DHT11）
+
+### 看图说话：原理图与手册原文
+
+DHT11 的两样依据：板子上它接在哪（座子），和数据手册规定的时序（必须照着做）。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— Grove 座（H14 标注 DHT11_DO，还有 LIGHT_DO/SMOKE_DO/RED_DO）](images/schem_grove_light.png)
+
+**怎么读这张图**：DHT11 的数据网络叫 DHT11_DO，从这张图找到座子位置；具体接芯片哪个脚查 Pin Mapping 表（任务一贴过）。
+
+![手册依据：DHT11 官方数据手册（中文版）第2页 —— 串行接口定义](images/dht11_p2_interface.png)
+
+**怎么读这张图**：通讯过程一图流：主机拉低≥18ms → 释放 → DHT 回应 83µs 低+87µs 高 → 连发 40 位。代码里的 delay_ms(20) 就是照这页写的。
+
+![手册依据：DHT11 官方数据手册（中文版）第3页 —— 位"0/1"判定与 40 位数据格式](images/dht11_p3_interface.png)
+
+**怎么读这张图**：位 0 和位 1 的区别只在高电平持续 26~28µs 还是 70µs——这就是代码"等高电平后 delay 40µs 再采样"的出处。校验和=前四字节之和低 8 位。
+
 
 ## 第一步 · 引脚从哪来
 
@@ -1199,6 +1253,15 @@ void SystemClock_Config(void)
 
 # 任务六 · 烟雾数据（光敏模块顶替）
 
+### 看图说话：原理图与手册原文
+
+光敏(烟雾替身)的电路依据：模块 DO 输出接 Grove 座。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— Grove 座 H6（LIGHT_DO 光敏）/H7（SMOKE_DO 烟雾）](images/schem_grove_light.png)
+
+**怎么读这张图**：光敏模块 DO 是开漏输出——只会拉低不会拉高，所以接它的 GPIO 必须配"上拉输入"，否则永远读不到 1。这是本章第一大坑的电路根源。
+
+
 ## 第一步 · 引脚从哪来 + 为什么能顶替
 
 | 光敏模块引脚 | 接到 |
@@ -1274,6 +1337,15 @@ o_print(2, 48, light ? "OK  " : "DARK");
 
 # 任务七 · OLED 显示
 
+### 看图说话：原理图与手册原文
+
+OLED 的电路依据：屏的 SCL/SDA 接到哪两个网络。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— OLED 座（OLED_SCL/OLED_SDA）](images/schem_oled.png)
+
+**怎么读这张图**：0.96 寸 OLED 四线：VCC/GND/SCL/SDA。SCL/SDA 网络经 Pin Mapping 表查到 PB8/PB9——软件 I2C 就是在这两个脚上手工翻转电平。
+
+
 ## 接线
 
 | OLED 引脚 | 接到 |
@@ -1303,6 +1375,31 @@ static void sda_rel(void){ GPIO_InitTypeDef g={0};             /* 释放 = 上�
 
 
 # 任务八 · SPI 读取 Flash（W25Q 系列）
+
+### 看图说话：原理图与手册原文
+
+Flash 章节的三样依据：板子电路、芯片手册命令表、JEDEC ID 定义。
+
+![手册依据：嘉立创 v1.3 原理图 第2页 —— Flash 电路（U6 芯片丝印 W25Q16VSSIQ，FLA_CS/MISO/CLK/MOSI 网络）](images/schem_flash.png)
+
+**怎么读这张图**：芯片丝印直接写明 W25Q16——这就是"实测 JEDEC ID=EF 40 15、容量 2MB，与任务书 W25Q64 不符"的电路实锤。
+
+![手册依据：RM0008 中文版 PDF 第461页 —— SPI 寄存器组偏移表（0x00 CR1 / 0x08 SR / 0x0C DR）](images/rm0008_p461_spi_map.png)
+
+**怎么读这张图**：SPI2 基址（查存储器映射）+偏移=寄存器地址；发命令=写 DR，等标志=查 SR。
+
+![手册依据：RM0008 中文版 PDF 第462页 —— SPI_CR1 位表（SPE/BR/MSTR/SSM）](images/rm0008_p462_spi_cr1.png)
+
+**怎么读这张图**：使能位 SPE、分频 BR、主从 MSTR 都在这一个寄存器里。
+
+![手册依据：W25Q64JV 数据手册（Winbond）第22页 —— 指令集总表](images/w25q64_p22_instruction_set.png)
+
+**怎么读这张图**：读 ID=0x9F、读数据=0x03、写使能=0x06、擦扇区=0x20、页编程=0x02……代码里每个命令字节都查这张表。
+
+![手册依据：W25Q64JV 数据手册（Winbond）第50页 —— Read JEDEC ID (9Fh)](images/w25q64_p50_jedec.png)
+
+**怎么读这张图**：JEDEC ID 三字节=厂商+类型+容量。EF=Winbond；我们读到 EF 40 15，15 对应 W25Q16（2MB）——"以实物为准"的依据。
+
 
 ## 硬件事实（实测定案，以实物为准）
 
@@ -1389,6 +1486,23 @@ PERSIST OK: "STM32" survived reset! (flash keeps data)   ← 断电不丢 ✓
 ---
 
 # 任务九 · WiFi 上云（ESP8266 → OneNET）
+
+### 看图说话：原理图与手册原文
+
+上云章节的依据：ESP8266 座的电路、USART 寄存器（芯片侧的收发器）。
+
+![手册依据：嘉立创 v1.3 原理图 第3页 —— ESP8266 座（U11 ESP8266-01S：EN 接 3V3，RST/IO0/IO2 悬空，RXD/TXD 接芯片）](images/schem_esp8266.png)
+
+**怎么读这张图**：看这张图记住三件事：EN 已被拉到 3V3（模块自动开机）；RST/IO0 悬空（无自动复位电路，程序里用 AT+RST 软复位）；RXD/TXD 对应芯片 PA2/PA3（查 Pin Mapping）。
+
+![手册依据：RM0008 中文版 PDF 第517页 —— USART 寄存器组偏移表](images/rm0008_p517_usart_map.png)
+
+**怎么读这张图**：任务九芯片侧就是 USART2（APB1，36MHz）——BRR=(36M+57600)/115200=313 的出处。
+
+![手册依据：RM0008 中文版 PDF 第525页 —— USART_BRR 位表](images/rm0008_p525_usart_brr.png)
+
+**怎么读这张图**：同任务二，只是时钟换成 36MHz——同一公式不同时钟，分频值就不同。
+
 
 > 本章把前八章全部串起来：DHT11 温湿度 + 光敏光照 → OLED 屏显示 + 串口打印 →
 > ESP8266 通过 WiFi 传到 OneNET 云平台网页。**三处数字必须一致**：屏幕 = 串口 = 云端。
